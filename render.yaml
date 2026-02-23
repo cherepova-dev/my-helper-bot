@@ -1,0 +1,13 @@
+# Render Blueprint — при подключении репо к Render сервис создаётся автоматически.
+# В Dashboard нужно один раз ввести TELEGRAM_BOT_TOKEN (Environment).
+
+services:
+  - type: web
+    runtime: python
+    name: my-helper-bot
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot_replit.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false   # Ввести вручную в Render Dashboard (Environment)
