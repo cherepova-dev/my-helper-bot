@@ -1,6 +1,3 @@
-# Render Blueprint — при подключении репо к Render сервис создаётся автоматически.
-# Python runtime: бот отвечает стабильно. Голосовые — без распознавания текста (нет ffmpeg).
-
 services:
   - type: web
     runtime: python
@@ -10,4 +7,8 @@ services:
     startCommand: python bot_replit.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
-        sync: false   # Ввести вручную в Render Dashboard (Environment)
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
