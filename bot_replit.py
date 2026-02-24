@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Бот для Replit: polling + простой HTTP-сервер для keep-alive (UptimeRobot).
-Запуск на Replit: Run -> python bot_replit.py
+Бот для Render/Replit: HTTP-сервер в главном потоке (Render проверяет PORT),
+бот в фоне. Запуск: python bot_replit.py
 """
 import os
+import sys
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Токен — на Replit задай в Secrets (Tools -> Secrets): TELEGRAM_BOT_TOKEN
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8785603117:AAGWVVEWSVbIc_ZZDhd26OprknT0e6Ldh1Q")
-
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 PORT = int(os.environ.get("PORT", "8080"))
 
 
@@ -29,13 +29,20 @@ def run_http():
 
 
 def run_bot():
-    from bot import main
-    main()
+    try:
+        from bot import main
+        main()
+    except Exception as e:
+        print(f"Bot error: {e}", flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
-        print("Задай TELEGRAM_BOT_TOKEN в Replit Secrets")
-        exit(1)
-    threading.Thread(target=run_http, daemon=True).start()
-    run_bot()
+        print("TELEGRAM_BOT_TOKEN not set", flush=True)
+        sys.exit(1)
+    # Бот в фоне; главный поток — HTTP, чтобы Render сразу видел PORT
+    t = threading.Thread(target=run_bot, daemon=True)
+    t.start()
+    time.sleep(0.5)
+    run_http()

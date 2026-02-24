@@ -6,7 +6,7 @@ services:
     runtime: python
     name: my-helper-bot
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements-render.txt
     startCommand: python bot_replit.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
