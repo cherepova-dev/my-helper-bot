@@ -1,11 +1,13 @@
 # Render Blueprint — при подключении репо к Render сервис создаётся автоматически.
-# Docker нужен для ffmpeg (распознавание голосовых сообщений).
+# Python runtime: бот отвечает стабильно. Голосовые — без распознавания текста (нет ffmpeg).
 
 services:
   - type: web
-    runtime: docker
+    runtime: python
     name: my-helper-bot
     plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot_replit.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false   # Ввести вручную в Render Dashboard (Environment)
