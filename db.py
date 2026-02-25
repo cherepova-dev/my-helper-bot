@@ -29,10 +29,23 @@ _SQLITE_PATH = os.environ.get("BOT_DB_PATH", "bot_data.db")
 def _get_conn():
     global _conn
     if USE_PG:
-        if _conn is None or _conn.closed:
+        need_new = _conn is None
+        if not need_new:
+            try:
+                need_new = _conn.closed != 0
+                if not need_new:
+                    _conn.cursor().execute("SELECT 1")
+            except Exception:
+                need_new = True
+                try:
+                    _conn.close()
+                except Exception:
+                    pass
+        if need_new:
             _conn = psycopg2.connect(DATABASE_URL, sslmode="require")
             _conn.autocommit = True
             _init_tables_pg()
+            logger.info("PostgreSQL connected")
     else:
         if _conn is None:
             _conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
