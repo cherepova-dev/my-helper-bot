@@ -2,13 +2,15 @@
 """
 Бот для Render/Replit: HTTP-сервер в фоновом потоке (Render проверяет PORT),
 бот в главном потоке (python-telegram-bot v21+ требует главный поток).
-При падении бот автоматически перезапускается.
+При падении бот автоматически перезапускается с новым event loop.
 """
 import os
 import sys
 import time
+import asyncio
 import threading
 import logging
+import importlib
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -39,25 +41,42 @@ def run_http():
 
 def run_bot():
     global bot_healthy
-    max_retries = 5
-    retry_delay = 10
+    max_retries = 10
+    base_delay = 15
 
     for attempt in range(1, max_retries + 1):
         try:
             bot_healthy = True
             logger.info("Запуск бота (попытка %d/%d)", attempt, max_retries)
-            from bot import main
-            main()
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            import bot as bot_module
+            importlib.reload(bot_module)
+            bot_module.main()
+
+        except SystemExit:
+            logger.info("Бот завершился (SystemExit)")
+            break
         except Exception as e:
             bot_healthy = False
             logger.error("Бот упал: %s", e)
-            if attempt < max_retries:
-                wait = retry_delay * attempt
-                logger.info("Перезапуск через %dс...", wait)
-                time.sleep(wait)
-            else:
-                logger.critical("Бот не смог запуститься после %d попыток", max_retries)
-                sys.exit(1)
+        finally:
+            try:
+                loop = asyncio.get_event_loop()
+                if not loop.is_closed():
+                    loop.close()
+            except Exception:
+                pass
+
+        if attempt < max_retries:
+            wait = base_delay * attempt
+            logger.info("Перезапуск через %dс...", wait)
+            time.sleep(wait)
+        else:
+            logger.critical("Бот не смог запуститься после %d попыток", max_retries)
+            sys.exit(1)
 
 
 if __name__ == "__main__":
