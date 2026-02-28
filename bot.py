@@ -4,10 +4,11 @@ Telegram-бот: личный AI-ассистент.
 MVP: онбординг, приём задач через AI, список задач, отметка «сделано», подсказки.
 """
 
+import asyncio
 import logging
 import os
 
-from telegram import BotCommand, Update
+from telegram import Bot, BotCommand, Update
 from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
     Application,
@@ -351,10 +352,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # ── Запуск ───────────────────────────────────────────────────────────────
 
+def _set_menu_commands_sync() -> None:
+    """Устанавливает меню команд до старта Application (гарантированно выполняется)."""
+    async def _do():
+        bot = Bot(token=BOT_TOKEN)
+        try:
+            await bot.delete_my_commands()
+            commands = [BotCommand(cmd, desc) for cmd, desc in BOT_COMMANDS]
+            await bot.set_my_commands(commands)
+            logger.info("MENU: команды установлены при старте (%d пунктов)", len(commands))
+        except Exception as e:
+            logger.exception("MENU: ошибка установки команд: %s", e)
+
+    try:
+        asyncio.run(_do())
+    except Exception as e:
+        logger.exception("MENU: asyncio.run ошибка: %s", e)
+
+
 def main() -> None:
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("Задайте токен: переменная TELEGRAM_BOT_TOKEN.")
         return
+
+    _set_menu_commands_sync()
 
     builder = (
         Application.builder()
@@ -396,7 +417,7 @@ def main() -> None:
             logger.exception("Ошибка: %s", context.error)
 
     app.add_error_handler(on_error)
-    logger.info("Бот запущен (MVP).")
+    logger.info("Бот запущен (MVP). [меню при старте]")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
