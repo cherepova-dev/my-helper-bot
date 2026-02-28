@@ -142,17 +142,26 @@ def _format_task_list(tasks: list[dict]) -> str:
 
 # ── Обработчики ──────────────────────────────────────────────────────────
 
+# Флаг: меню уже отправляли в Telegram (один раз за сессию)
+_menu_commands_sent = False
+
+
 async def _ensure_menu_commands_set(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Устанавливает меню команд один раз за сессию (fallback, если post_init не сработал)."""
-    if context.bot_data.get("_menu_commands_set"):
+    global _menu_commands_sent
+    logger.info("MENU: _ensure_menu_commands_set вызван, _menu_commands_sent=%s", _menu_commands_sent)
+    if _menu_commands_sent:
         return
     try:
+        bot = context.application.bot
+        await bot.delete_my_commands()  # сброс кэша Telegram
         commands = [BotCommand(cmd, desc) for cmd, desc in BOT_COMMANDS]
-        await context.application.bot.set_my_commands(commands)
-        context.bot_data["_menu_commands_set"] = True
-        logger.info("Меню команд установлено из /start (%d пунктов)", len(commands))
+        logger.info("MENU: вызываю set_my_commands (%d команд)", len(commands))
+        await bot.set_my_commands(commands)
+        _menu_commands_sent = True
+        logger.info("MENU: set_my_commands успешно, меню установлено")
     except Exception as e:
-        logger.warning("Не удалось установить меню команд: %s", e)
+        logger.exception("MENU: set_my_commands ошибка: %s", e)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -359,13 +368,14 @@ def main() -> None:
         logger.info("Прокси: %s", PROXY_URL.split("@")[-1] if "@" in PROXY_URL else PROXY_URL)
 
     async def post_init(application: Application) -> None:
-        logger.info("post_init: установка меню команд...")
-        commands = [BotCommand(cmd, desc) for cmd, desc in BOT_COMMANDS]
+        logger.info("MENU: post_init вызван, устанавливаю команды...")
         try:
+            await application.bot.delete_my_commands()
+            commands = [BotCommand(cmd, desc) for cmd, desc in BOT_COMMANDS]
             await application.bot.set_my_commands(commands)
-            logger.info("Меню команд установлено при старте (%d пунктов)", len(commands))
+            logger.info("MENU: post_init set_my_commands OK (%d пунктов)", len(commands))
         except Exception as e:
-            logger.warning("post_init: не удалось установить меню: %s", e)
+            logger.exception("MENU: post_init set_my_commands ошибка: %s", e)
 
     app = builder.post_init(post_init).build()
 
