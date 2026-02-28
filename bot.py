@@ -76,6 +76,17 @@ TIPS = [
 # Показываем подсказку после каждой 3-й задачи (3, 6, 9, ... до 21)
 TIP_INTERVAL = 3
 
+# Меню команд (используется при старте и в /start как fallback)
+BOT_COMMANDS = [
+    ("start", "Начать"),
+    ("tasks", "Все задачи"),
+    ("today", "План на сегодня"),
+    ("done", "Отметить выполненной"),
+    ("add", "Добавить задачу"),
+    ("categories", "Категории"),
+    ("help", "Помощь"),
+]
+
 
 # ── Утилиты ──────────────────────────────────────────────────────────────
 
@@ -131,7 +142,21 @@ def _format_task_list(tasks: list[dict]) -> str:
 
 # ── Обработчики ──────────────────────────────────────────────────────────
 
+async def _ensure_menu_commands_set(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Устанавливает меню команд один раз за сессию (fallback, если post_init не сработал)."""
+    if context.bot_data.get("_menu_commands_set"):
+        return
+    try:
+        commands = [BotCommand(cmd, desc) for cmd, desc in BOT_COMMANDS]
+        await context.application.bot.set_my_commands(commands)
+        context.bot_data["_menu_commands_set"] = True
+        logger.info("Меню команд установлено из /start (%d пунктов)", len(commands))
+    except Exception as e:
+        logger.warning("Не удалось установить меню команд: %s", e)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _ensure_menu_commands_set(context)
     user = update.effective_user
     db.get_or_create_user(user.id, user.first_name or "")
     await _reply(update, ONBOARDING)
@@ -334,20 +359,13 @@ def main() -> None:
         logger.info("Прокси: %s", PROXY_URL.split("@")[-1] if "@" in PROXY_URL else PROXY_URL)
 
     async def post_init(application: Application) -> None:
-        commands = [
-            BotCommand("start", "Начать"),
-            BotCommand("tasks", "Все задачи"),
-            BotCommand("today", "План на сегодня"),
-            BotCommand("done", "Отметить выполненной"),
-            BotCommand("add", "Добавить задачу"),
-            BotCommand("categories", "Категории"),
-            BotCommand("help", "Помощь"),
-        ]
+        logger.info("post_init: установка меню команд...")
+        commands = [BotCommand(cmd, desc) for cmd, desc in BOT_COMMANDS]
         try:
             await application.bot.set_my_commands(commands)
-            logger.info("Меню команд установлено (%d пунктов)", len(commands))
+            logger.info("Меню команд установлено при старте (%d пунктов)", len(commands))
         except Exception as e:
-            logger.warning("Не удалось установить меню команд: %s", e)
+            logger.warning("post_init: не удалось установить меню: %s", e)
 
     app = builder.post_init(post_init).build()
 
