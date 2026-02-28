@@ -44,6 +44,16 @@ def run_bot():
     max_retries = 10
     base_delay = 15
 
+    _stamp = ""
+    try:
+        _p = os.path.join(os.path.dirname(__file__) or ".", "deploy_stamp.txt")
+        if os.path.exists(_p):
+            with open(_p, encoding="utf-8") as _f:
+                _stamp = _f.read().strip()
+    except Exception:
+        pass
+    logger.info("DEPLOY_STAMP: %s", _stamp or "none")
+
     for attempt in range(1, max_retries + 1):
         try:
             bot_healthy = True
