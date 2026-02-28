@@ -334,7 +334,7 @@ def main() -> None:
         logger.info("Прокси: %s", PROXY_URL.split("@")[-1] if "@" in PROXY_URL else PROXY_URL)
 
     async def post_init(application: Application) -> None:
-        await application.bot.set_my_commands([
+        commands = [
             BotCommand("start", "Начать"),
             BotCommand("tasks", "Все задачи"),
             BotCommand("today", "План на сегодня"),
@@ -342,7 +342,12 @@ def main() -> None:
             BotCommand("add", "Добавить задачу"),
             BotCommand("categories", "Категории"),
             BotCommand("help", "Помощь"),
-        ])
+        ]
+        try:
+            await application.bot.set_my_commands(commands)
+            logger.info("Меню команд установлено (%d пунктов)", len(commands))
+        except Exception as e:
+            logger.warning("Не удалось установить меню команд: %s", e)
 
     app = builder.post_init(post_init).build()
 
