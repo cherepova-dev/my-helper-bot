@@ -334,6 +334,16 @@ def get_active_tasks(user_id: int) -> list[dict]:
     )
 
 
+def get_today_tasks(user_id: int) -> list[dict]:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+        "AND (due_date = %s OR due_date IS NULL) "
+        "ORDER BY priority_score DESC",
+        (user_id, today),
+    )
+
+
 def complete_task(task_id: int, user_id: int | None = None) -> bool:
     now = datetime.now(timezone.utc).isoformat()
     if user_id is not None:

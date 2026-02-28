@@ -7,7 +7,7 @@ MVP: онбординг, приём задач через AI, список за�
 import logging
 import os
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
     Application,
@@ -54,14 +54,13 @@ ONBOARDING = (
 
 HELP_TEXT = (
     "Что я умею:\n\n"
-    "📝 Задачи — просто напиши или надиктуй\n"
-    "✅ Готово — «Готово: [задача]»\n"
-    "📋 Список — «Покажи задачи» или /tasks\n"
-    "📊 План — «Что на сегодня?» или /plan\n"
-    "🗂 Категории — /categories\n"
-    "⚙️ Настройки — /settings\n"
-    "🔁 Регулярные — при создании скажи «каждый день» или «каждую неделю»\n\n"
-    "Просто пиши как удобно — я пойму."
+    "📝 /add — Добавить задачу\n"
+    "📋 /tasks — Все активные задачи\n"
+    "📅 /today — План на сегодня\n"
+    "✅ /done — Отметить задачу выполненной\n"
+    "🗂 /categories — Категории\n"
+    "🔄 /start — Начать сначала\n\n"
+    "Или просто пиши / диктуй как удобно — я пойму."
 )
 
 TIPS = [
@@ -146,6 +145,41 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     tasks = db.get_active_tasks(user_row["id"])
     await _reply(update, _format_task_list(tasks))
+
+
+async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_row = db.get_or_create_user(update.effective_user.id)
+    tasks = db.get_today_tasks(user_row["id"])
+    if not tasks:
+        await _reply(update, "📅 На сегодня задач нет. Свободный день или напиши новую задачу!")
+        return
+    lines = ["📅 План на сегодня:\n"]
+    for t in tasks:
+        emoji = t.get("category_emoji", "") or "📝"
+        text = t["text"]
+        extra = ""
+        if t.get("due_time"):
+            extra += f" ⏰ {t['due_time']}"
+        elif t.get("time_of_day"):
+            tod_icons = {"утро": "🌅", "день": "☀️", "вечер": "🌆", "ночь": "🌙"}
+            tod = t["time_of_day"]
+            extra += f" {tod_icons.get(tod, '🕐')} {tod}"
+        score = t.get("priority_score", 0)
+        if score:
+            extra += f" (⚡ {score})"
+        lines.append(f"☐ {emoji} {text}{extra}")
+    await _reply(update, "\n".join(lines))
+
+
+async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _reply(
+        update,
+        "📝 Напиши или надиктуй задачу — я её запишу.\n\n"
+        "Например:\n"
+        "• Купить продукты завтра\n"
+        "• Записать дочку к врачу в пятницу в 10:00\n"
+        "• Позвонить маме вечером",
+    )
 
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -299,11 +333,24 @@ def main() -> None:
         builder = builder.proxy(PROXY_URL).get_updates_proxy(PROXY_URL)
         logger.info("Прокси: %s", PROXY_URL.split("@")[-1] if "@" in PROXY_URL else PROXY_URL)
 
-    app = builder.build()
+    async def post_init(application: Application) -> None:
+        await application.bot.set_my_commands([
+            BotCommand("start", "Начать"),
+            BotCommand("tasks", "Все задачи"),
+            BotCommand("today", "План на сегодня"),
+            BotCommand("done", "Отметить выполненной"),
+            BotCommand("add", "Добавить задачу"),
+            BotCommand("categories", "Категории"),
+            BotCommand("help", "Помощь"),
+        ])
+
+    app = builder.post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("tasks", cmd_tasks))
+    app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("done", cmd_done))
     app.add_handler(CommandHandler("categories", cmd_categories))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
