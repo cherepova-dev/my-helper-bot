@@ -7,7 +7,7 @@
 
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,11 @@ def _init_tables_pg() -> None:
     CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
     CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id);
     """)
+    try:
+        cur.execute("ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE")
+    except Exception:
+        if _conn and not _conn.closed:
+            _conn.rollback()
     cur.close()
 
 
@@ -156,6 +161,11 @@ def _init_tables_sqlite() -> None:
     );
     """)
     _conn.commit()
+    try:
+        _conn.execute("ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE")
+        _conn.commit()
+    except Exception:
+        pass
 
 
 # ── Универсальные хелперы ────────────────────────────────────────────────
@@ -383,6 +393,122 @@ def find_tasks_by_texts(user_id: int, searches: list[str]) -> list[dict]:
             found.append(task)
             seen_ids.add(task["id"])
     return found
+
+
+def get_done_tasks(user_id: int, days: int = 7) -> list[dict]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'done' "
+        "AND completed_at >= %s ORDER BY completed_at DESC",
+        (user_id, cutoff),
+    )
+
+
+def get_tasks_by_category(user_id: int, category_name: str) -> list[dict]:
+    return _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+        "AND LOWER(category_name) = LOWER(%s) ORDER BY priority_score DESC",
+        (user_id, category_name),
+    )
+
+
+def update_task(task_id: int, user_id: int, **kwargs) -> dict | None:
+    allowed = {
+        "text", "due_date", "due_time", "time_of_day",
+        "category_emoji", "category_name",
+        "priority_value", "priority_urgency", "priority_risk", "priority_size",
+    }
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if not fields:
+        return _fetchone(
+            "SELECT * FROM tasks WHERE id = %s AND user_id = %s",
+            (task_id, user_id),
+        )
+
+    priority_keys = {"priority_value", "priority_urgency", "priority_risk", "priority_size"}
+    if fields.keys() & priority_keys:
+        current = _fetchone(
+            "SELECT priority_value, priority_urgency, priority_risk, priority_size "
+            "FROM tasks WHERE id = %s AND user_id = %s",
+            (task_id, user_id),
+        )
+        if not current:
+            return None
+        pv = fields.get("priority_value", current["priority_value"])
+        pu = fields.get("priority_urgency", current["priority_urgency"])
+        pr = fields.get("priority_risk", current["priority_risk"])
+        ps = fields.get("priority_size", current["priority_size"])
+        fields["priority_score"] = _calc_score(pv, pu, pr, ps)
+
+    set_parts = []
+    params = []
+    for col, val in fields.items():
+        set_parts.append(f"{col} = %s")
+        params.append(val)
+    params.extend([task_id, user_id])
+
+    _execute(
+        f"UPDATE tasks SET {', '.join(set_parts)} WHERE id = %s AND user_id = %s",
+        tuple(params),
+    )
+    return _fetchone(
+        "SELECT * FROM tasks WHERE id = %s AND user_id = %s",
+        (task_id, user_id),
+    )
+
+
+def delete_task(task_id: int, user_id: int) -> bool:
+    n = _execute(
+        "UPDATE tasks SET status = 'cancelled' WHERE id = %s AND user_id = %s AND status = 'active'",
+        (task_id, user_id),
+    )
+    return n > 0
+
+
+def get_weekly_stats(user_id: int) -> dict:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    done_tasks = _fetchall(
+        "SELECT category_name FROM tasks WHERE user_id = %s AND status = 'done' "
+        "AND completed_at >= %s",
+        (user_id, cutoff),
+    )
+    total_done = len(done_tasks)
+
+    categories_done: dict[str, int] = {}
+    for t in done_tasks:
+        cat = t["category_name"] or ""
+        categories_done[cat] = categories_done.get(cat, 0) + 1
+
+    row = _fetchone(
+        "SELECT COUNT(*) AS cnt FROM tasks WHERE user_id = %s AND status = 'active'",
+        (user_id,),
+    )
+    total_active = row["cnt"] if row else 0
+
+    overdue_rows = _fetchall(
+        "SELECT category_name, COUNT(*) AS cnt FROM tasks "
+        "WHERE user_id = %s AND status = 'active' "
+        "AND (due_date < %s OR due_date IS NULL) "
+        "GROUP BY category_name ORDER BY cnt DESC",
+        (user_id, datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+    )
+    most_postponed_category = overdue_rows[0]["category_name"] if overdue_rows else None
+
+    return {
+        "total_done": total_done,
+        "total_active": total_active,
+        "categories_done": categories_done,
+        "most_postponed_category": most_postponed_category,
+    }
+
+
+def get_routine_tasks(user_id: int) -> list[dict]:
+    return _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+        "AND is_routine = TRUE ORDER BY priority_score DESC",
+        (user_id,),
+    )
 
 
 def _calc_score(value: float, urgency: float, risk: float, size: float) -> float:

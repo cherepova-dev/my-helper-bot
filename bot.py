@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 Telegram-бот: личный AI-ассистент.
-MVP: онбординг, приём задач через AI, список задач, отметка «сделано», подсказки.
+Приём задач, приоритизация, планирование, рутины, отчёты.
 """
 
 import asyncio
 import logging
 import os
+from datetime import datetime
 
 from telegram import Bot, BotCommand, Update
+from telegram.constants import ParseMode
 from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
     Application,
@@ -41,27 +43,30 @@ logger = logging.getLogger(__name__)
 ONBOARDING = (
     "Привет! Я твой помощник по задачам и планам. "
     "Помогаю с делами и рутиной — спокойно и без лишнего стресса.\n\n"
-    "Вот что я умею:\n\n"
-    "📝 Записывать задачи — просто напиши или надиктуй, я разберусь.\n"
-    "   Например: «Купить продукты завтра» или «Записать дочку к врачу на пятницу»\n\n"
-    "📋 Показывать список дел — «Что у меня на сегодня?» или «Покажи задачи»\n\n"
+    "*Вот что я умею:*\n\n"
+    "📝 Записывать задачи — просто напиши или надиктуй\n"
+    "   _Например: «Купить продукты завтра» или «Записать дочку к врачу на пятницу»_\n\n"
+    "📋 Показывать список дел — «Что у меня на сегодня?»\n\n"
     "✅ Отмечать сделанное — «Готово: купила продукты»\n\n"
-    "📊 Приоритизировать — я сам оценю важность и срочность, но ты всегда можешь поправить.\n\n"
-    "⏰ Напоминать — мягко и вовремя, без давления.\n\n"
+    "✏️ Редактировать — «Перенеси врача на пятницу»\n\n"
+    "📊 Приоритизировать — оценю важность и срочность\n\n"
+    "📈 Отчёты — итоги за неделю\n\n"
     "🗂 Категории: 🏠 быт · 👨‍👩‍👧 семья · 💇‍♀️ уход · 🌿 для себя · "
     "🎫 досуг · 📦 дела · 🧠 проекты · 🔁 рутины\n\n"
-    "Для начала — просто напиши мне свою первую задачу!"
+    "_Для начала — просто напиши мне свою первую задачу!_"
 )
 
 HELP_TEXT = (
-    "Что я умею:\n\n"
+    "*Что я умею:*\n\n"
     "📝 /add — Добавить задачу\n"
     "📋 /tasks — Все активные задачи\n"
     "📅 /today — План на сегодня\n"
-    "✅ /done — Отметить задачу выполненной\n"
+    "✅ /done — Отметить выполненной\n"
+    "📈 /report — Отчёт за неделю\n"
+    "📜 /history — Выполненные задачи\n"
     "🗂 /categories — Категории\n"
     "🔄 /start — Начать сначала\n\n"
-    "Или просто пиши / диктуй как удобно — я пойму."
+    "_Или просто пиши / диктуй как удобно — я пойму._"
 )
 
 TIPS = [
@@ -70,20 +75,20 @@ TIPS = [
     "💡 Большую задачу можно разбить на шаги. Напиши «Разбей [задачу] на шаги».",
     "💡 Чтобы отметить дело как сделанное, напиши «Готово: [задача]».",
     "💡 Я умею работать с датами: «завтра», «в пятницу в 14:00», «через неделю».",
-    "💡 Напиши «Покажи категории» — можно добавить свои или переименовать.",
+    "💡 Чтобы перенести задачу, напиши: «Перенеси [задачу] на пятницу».",
     "💡 Если дел накопилось много — попроси: «Выбери 3 самых важных на сегодня».",
 ]
 
-# Показываем подсказку после каждой 3-й задачи (3, 6, 9, ... до 21)
 TIP_INTERVAL = 3
 
-# Меню команд (используется при старте и в /start как fallback)
 BOT_COMMANDS = [
     ("start", "Начать"),
     ("tasks", "Все задачи"),
     ("today", "План на сегодня"),
     ("done", "Отметить выполненной"),
     ("add", "Добавить задачу"),
+    ("report", "Отчёт за неделю"),
+    ("history", "Выполненные задачи"),
     ("categories", "Категории"),
     ("help", "Помощь"),
 ]
@@ -92,22 +97,24 @@ BOT_COMMANDS = [
 # ── Утилиты ──────────────────────────────────────────────────────────────
 
 async def _reply(update: Update, text: str, max_retries: int = 3) -> None:
-    import asyncio
     for attempt in range(max_retries + 1):
         try:
-            await update.message.reply_text(text)
+            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
             return
-        except (TimedOut, NetworkError) as e:
-            if attempt < max_retries:
-                wait = 2 ** attempt
-                logger.info("Retry %s/%s через %sс (%s)", attempt + 1, max_retries, wait, type(e).__name__)
-                await asyncio.sleep(wait)
-            else:
-                logger.warning("Не удалось отправить после %s попыток: %s", max_retries + 1, e)
+        except Exception:
+            try:
+                await update.message.reply_text(text)
+                return
+            except (TimedOut, NetworkError) as e:
+                if attempt < max_retries:
+                    wait = 2 ** attempt
+                    logger.info("Retry %s/%s через %sс (%s)", attempt + 1, max_retries, wait, type(e).__name__)
+                    await asyncio.sleep(wait)
+                else:
+                    logger.warning("Не удалось отправить после %s попыток: %s", max_retries + 1, e)
 
 
 def _get_tip(tips_shown: int) -> str | None:
-    """Возвращает подсказку, если пора, иначе None."""
     if tips_shown <= 0:
         return None
     if tips_shown % TIP_INTERVAL != 0:
@@ -120,42 +127,161 @@ def _get_tip(tips_shown: int) -> str | None:
 
 def _format_task_list(tasks: list[dict]) -> str:
     if not tasks:
-        return "У тебя пока нет активных задач. Напиши что-нибудь — я запишу!"
-    lines = ["📋 Твои задачи:\n"]
+        return "_У тебя пока нет активных задач. Напиши что-нибудь — я запишу!_"
+
+    groups: dict[str, list[str]] = {}
+    for t in tasks:
+        emoji = t.get("category_emoji", "") or "📝"
+        cat = t.get("category_name", "") or "Другое"
+        text = t["text"]
+        extra_parts = []
+        if t.get("due_date"):
+            extra_parts.append(t["due_date"])
+        if t.get("due_time"):
+            extra_parts.append(t["due_time"])
+        elif t.get("time_of_day"):
+            extra_parts.append(t["time_of_day"])
+        extra = f" — _{', '.join(extra_parts)}_" if extra_parts else ""
+        line = f"☐ {emoji} {text}{extra}"
+        key = f"{emoji} *{cat}*"
+        groups.setdefault(key, []).append(line)
+
+    total = sum(len(v) for v in groups.values())
+    lines = [f"📋 *Все задачи ({total})*\n"]
+    for header, items in groups.items():
+        lines.append(header)
+        lines.extend(items)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _format_today_tasks(tasks: list[dict]) -> str:
+    if not tasks:
+        return "📅 _На сегодня задач нет. Свободный день или напиши новую задачу!_"
+
+    now = datetime.now()
+    date_str = now.strftime("%d.%m")
+    months_ru = {
+        1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+        5: "мая", 6: "июня", 7: "июля", 8: "августа",
+        9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+    }
+    month_name = months_ru.get(now.month, "")
+
+    urgent, normal, evening, routine, projects = [], [], [], [], []
     for t in tasks:
         emoji = t.get("category_emoji", "") or "📝"
         text = t["text"]
-        extra = ""
-        if t.get("due_date"):
-            extra += f" 📅 {t['due_date']}"
+        time_str = ""
         if t.get("due_time"):
-            extra += f" ⏰ {t['due_time']}"
-        elif t.get("time_of_day"):
-            tod_icons = {"утро": "🌅", "день": "☀️", "вечер": "🌆", "ночь": "🌙"}
-            tod = t["time_of_day"]
-            extra += f" {tod_icons.get(tod, '🕐')} {tod}"
-        score = t.get("priority_score", 0)
-        if score:
-            extra += f" (⚡ {score})"
-        lines.append(f"☐ {emoji} {text}{extra}")
+            time_str = f" ⏰ {t['due_time']}"
+        line = f"☐ {emoji} {text}{time_str}"
+
+        is_routine = t.get("is_routine", False)
+        tod = (t.get("time_of_day") or "").lower()
+        cat_emoji = t.get("category_emoji", "")
+        score = t.get("priority_score", 0) or 0
+
+        if is_routine:
+            routine.append(line)
+        elif cat_emoji == "🧠":
+            projects.append(line)
+        elif tod in ("вечер", "ночь"):
+            evening.append(line)
+        elif score >= 5:
+            urgent.append(line)
+        else:
+            normal.append(line)
+
+    lines = [f"📅 *Сегодня, {now.day} {month_name} — план дня*\n"]
+
+    if urgent:
+        lines.append("🔥 *Срочно*")
+        lines.extend(urgent)
+        lines.append("")
+    if normal:
+        lines.append("🟡 *По возможности*")
+        lines.extend(normal)
+        lines.append("")
+    if projects:
+        lines.append("🧠 *Проекты*")
+        lines.extend(projects)
+        lines.append("")
+    if routine:
+        lines.append("🔁 *Рутины*")
+        lines.extend(routine)
+        lines.append("")
+    if evening:
+        lines.append("🌙 *Вечером*")
+        lines.extend(evening)
+        lines.append("")
+
+    total = len(tasks)
+    if total > 0 and urgent:
+        first_urgent = urgent[0].replace("☐ ", "").split(" ", 1)[-1].split(" ⏰")[0]
+        lines.append(f"_У тебя сегодня {total} задач. Самая срочная — {first_urgent}. Может, начнёшь с неё?_")
+
+    return "\n".join(lines)
+
+
+def _format_report(stats: dict) -> str:
+    lines = ["📈 *Итоги за неделю*\n"]
+    lines.append(f"✅ Выполнено: *{stats['total_done']}*")
+    lines.append(f"📋 Активных: *{stats['total_active']}*\n")
+
+    cats = stats.get("categories_done", {})
+    if cats:
+        lines.append("*По категориям:*")
+        for cat, count in sorted(cats.items(), key=lambda x: -x[1]):
+            cat_display = cat if cat else "Без категории"
+            lines.append(f"  ☑ {cat_display}: {count}")
+        lines.append("")
+
+    postponed = stats.get("most_postponed_category")
+    if postponed:
+        lines.append(f"⚠️ _Чаще всего откладываются задачи из: {postponed}_\n")
+
+    if stats["total_done"] > 0:
+        lines.append("_Отлично поработала на этой неделе!_ 🎉")
+    else:
+        lines.append("_На этой неделе пока ничего не отмечено — ничего страшного, начни с малого!_")
+
+    return "\n".join(lines)
+
+
+def _format_history(tasks: list[dict]) -> str:
+    if not tasks:
+        return "_За последнюю неделю нет выполненных задач._"
+
+    lines = ["📜 *Выполненные задачи (за 7 дней)*\n"]
+    for t in tasks:
+        emoji = t.get("category_emoji", "") or "✅"
+        text = t["text"]
+        completed = t.get("completed_at", "")
+        date_part = ""
+        if completed:
+            try:
+                dt = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+                date_part = f" — _{dt.strftime('%d.%m')}_"
+            except (ValueError, AttributeError):
+                pass
+        lines.append(f"☑ {emoji} {text}{date_part}")
     return "\n".join(lines)
 
 
 # ── Обработчики ──────────────────────────────────────────────────────────
 
-# Флаг: меню уже отправляли в Telegram (один раз за сессию)
 _menu_commands_sent = False
 
 
 async def _ensure_menu_commands_set(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Устанавливает меню команд один раз за сессию (fallback, если post_init не сработал)."""
     global _menu_commands_sent
     logger.info("MENU: _ensure_menu_commands_set вызван, _menu_commands_sent=%s", _menu_commands_sent)
     if _menu_commands_sent:
         return
     try:
         bot = context.application.bot
-        await bot.delete_my_commands()  # сброс кэша Telegram
+        await bot.delete_my_commands()
         commands = [BotCommand(cmd, desc) for cmd, desc in BOT_COMMANDS]
         logger.info("MENU: вызываю set_my_commands (%d команд)", len(commands))
         await bot.set_my_commands(commands)
@@ -185,32 +311,14 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     tasks = db.get_today_tasks(user_row["id"])
-    if not tasks:
-        await _reply(update, "📅 На сегодня задач нет. Свободный день или напиши новую задачу!")
-        return
-    lines = ["📅 План на сегодня:\n"]
-    for t in tasks:
-        emoji = t.get("category_emoji", "") or "📝"
-        text = t["text"]
-        extra = ""
-        if t.get("due_time"):
-            extra += f" ⏰ {t['due_time']}"
-        elif t.get("time_of_day"):
-            tod_icons = {"утро": "🌅", "день": "☀️", "вечер": "🌆", "ночь": "🌙"}
-            tod = t["time_of_day"]
-            extra += f" {tod_icons.get(tod, '🕐')} {tod}"
-        score = t.get("priority_score", 0)
-        if score:
-            extra += f" (⚡ {score})"
-        lines.append(f"☐ {emoji} {text}{extra}")
-    await _reply(update, "\n".join(lines))
+    await _reply(update, _format_today_tasks(tasks))
 
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(
         update,
         "📝 Напиши или надиктуй задачу — я её запишу.\n\n"
-        "Например:\n"
+        "_Например:_\n"
         "• Купить продукты завтра\n"
         "• Записать дочку к врачу в пятницу в 10:00\n"
         "• Позвонить маме вечером",
@@ -221,27 +329,38 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     tasks = db.get_active_tasks(user_row["id"])
     if not tasks:
-        await _reply(update, "Нет активных задач для завершения.")
+        await _reply(update, "_Нет активных задач для завершения._")
         return
     text = _format_task_list(tasks)
-    text += "\n\nНапиши номер задачи или «Готово: [текст задачи]», чтобы отметить."
+    text += "\n\n_Напиши «Готово: [текст задачи]», чтобы отметить._"
     await _reply(update, text)
+
+
+async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_row = db.get_or_create_user(update.effective_user.id)
+    stats = db.get_weekly_stats(user_row["id"])
+    await _reply(update, _format_report(stats))
+
+
+async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_row = db.get_or_create_user(update.effective_user.id)
+    tasks = db.get_done_tasks(user_row["id"], days=7)
+    await _reply(update, _format_history(tasks))
 
 
 async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     cats = db.get_categories(user_row["id"])
     if not cats:
-        await _reply(update, "Категории не найдены.")
+        await _reply(update, "_Категории не найдены._")
         return
-    lines = ["🗂 Твои категории:\n"]
+    lines = ["🗂 *Твои категории:*\n"]
     for c in cats:
         lines.append(f"  {c['emoji']} {c['name']}")
     await _reply(update, "\n".join(lines))
 
 
 async def _process_user_text(update: Update, user_text: str) -> None:
-    """Общая логика: принимает текст, отправляет в AI, сохраняет задачи, отвечает."""
     user = update.effective_user
     user_row = db.get_or_create_user(user.id, user.first_name or "")
 
@@ -269,7 +388,6 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             priority_risk=ai_result.get("priority_risk", 5),
             priority_size=ai_result.get("priority_size", 5),
         )
-
         tips_count = db.increment_tips(user.id)
         tip = _get_tip(tips_count)
         if tip:
@@ -292,7 +410,6 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                 priority_size=t.get("priority_size", 5),
             )
             db.increment_tips(user.id)
-
         tips_count = db.get_tips_shown(user.id)
         tip = _get_tip(tips_count)
         if tip:
@@ -303,9 +420,9 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         found = db.find_task_by_text(user_row["id"], search)
         if found:
             db.complete_task(found["id"], user_id=user_row["id"])
-            reply_text = f"✅ Отмечено: {found['text']}"
+            reply_text = f"✅ Отмечено: «{found['text']}»\n\n_Молодец! Одним делом меньше._"
         else:
-            reply_text = "Не нашла такую задачу. Покажи список (/tasks) и уточни."
+            reply_text = "_Не нашла такую задачу. Покажи список_ (/tasks) _и уточни._"
 
     elif msg_type == "done_multiple":
         searches = ai_result.get("search_texts", [])
@@ -315,28 +432,66 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             for t in found_tasks:
                 db.complete_task(t["id"], user_id=user_row["id"])
                 done_names.append(t["text"])
-            reply_text = f"✅ Отмечено {len(done_names)} задач:\n" + "\n".join(
-                f"  ✅ {name}" for name in done_names
+            reply_text = f"✅ *Отмечено {len(done_names)} задач:*\n" + "\n".join(
+                f"  ☑ {name}" for name in done_names
             )
-            not_found = [s for s in searches if not db.find_task_by_text(user_row["id"], s) and s.lower().strip() not in [n.lower() for n in done_names]]
+            not_found = [
+                s for s in searches
+                if s.lower().strip() not in [n.lower() for n in done_names]
+                and not db.find_task_by_text(user_row["id"], s)
+            ]
             if not_found:
-                reply_text += "\n\n⚠️ Не нашла: " + ", ".join(not_found)
+                reply_text += "\n\n⚠️ _Не нашла:_ " + ", ".join(not_found)
+            reply_text += "\n\n_Отличная работа!_"
         else:
-            reply_text = "Не нашла эти задачи. Покажи список (/tasks) и уточни."
+            reply_text = "_Не нашла эти задачи. Покажи список_ (/tasks) _и уточни._"
+
+    elif msg_type == "edit":
+        search = ai_result.get("search_text", "")
+        updates = ai_result.get("updates", {})
+        found = db.find_task_by_text(user_row["id"], search)
+        if found:
+            update_kwargs = {}
+            field_map = {
+                "task_text": "text",
+                "due_date": "due_date",
+                "due_time": "due_time",
+                "time_of_day": "time_of_day",
+                "category_emoji": "category_emoji",
+                "category_name": "category_name",
+                "priority_value": "priority_value",
+                "priority_urgency": "priority_urgency",
+                "priority_risk": "priority_risk",
+                "priority_size": "priority_size",
+            }
+            for ai_key, db_key in field_map.items():
+                if ai_key in updates:
+                    update_kwargs[db_key] = updates[ai_key]
+            db.update_task(found["id"], user_row["id"], **update_kwargs)
+        else:
+            reply_text = "_Не нашла задачу для редактирования. Покажи список_ (/tasks) _и уточни._"
+
+    elif msg_type == "delete":
+        search = ai_result.get("search_text", "")
+        found = db.find_task_by_text(user_row["id"], search)
+        if found:
+            db.delete_task(found["id"], user_row["id"])
+            reply_text = f"🗑 *Удалено:* «{found['text']}»\n\n_Готово, задача убрана из списка._"
+        else:
+            reply_text = "_Не нашла задачу для удаления. Покажи список_ (/tasks) _и уточни._"
 
     db.save_message(user_row["id"], "assistant", reply_text)
     await _reply(update, reply_text)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Голосовое сообщение → Whisper → обработка как текст."""
     voice = update.message.voice
     tg_file = await context.bot.get_file(voice.file_id)
     voice_bytes = bytes(await tg_file.download_as_bytearray())
 
     text = ai_module.transcribe_voice(voice_bytes)
     if not text:
-        await _reply(update, "🎤 Не удалось распознать голосовое. Попробуй ещё раз или напиши текстом.")
+        await _reply(update, "🎤 _Не удалось распознать голосовое. Попробуй ещё раз или напиши текстом._")
         return
 
     await _reply(update, f"🎤 Распознано: «{text}»")
@@ -353,7 +508,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 # ── Запуск ───────────────────────────────────────────────────────────────
 
 def _set_menu_commands_sync() -> None:
-    """Устанавливает меню команд до старта Application (гарантированно выполняется)."""
     async def _do():
         bot = Bot(token=BOT_TOKEN)
         try:
@@ -406,6 +560,8 @@ def main() -> None:
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("done", cmd_done))
+    app.add_handler(CommandHandler("report", cmd_report))
+    app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("categories", cmd_categories))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
@@ -417,7 +573,7 @@ def main() -> None:
             logger.exception("Ошибка: %s", context.error)
 
     app.add_error_handler(on_error)
-    logger.info("Бот запущен (MVP). [меню при старте]")
+    logger.info("Бот запущен (v2). [меню при старте]")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
