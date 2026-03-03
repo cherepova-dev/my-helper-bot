@@ -432,16 +432,39 @@ def _merge_task_list(items: list[dict]) -> dict:
             "category_name": item.get("category_name", ""),
             "due_date": item.get("due_date"),
             "due_time": item.get("due_time"),
+            "time_of_day": item.get("time_of_day"),
+            "is_routine": item.get("is_routine", False),
+            "repeat_day": item.get("repeat_day"),
             "priority_value": item.get("priority_value", 5),
             "priority_urgency": item.get("priority_urgency", 5),
             "priority_risk": item.get("priority_risk", 5),
             "priority_size": item.get("priority_size", 5),
         })
-    names = [t["task_text"] for t in tasks if t["task_text"]]
-    reply = f"Записала {len(tasks)} задач:\n" + "\n".join(
-        f"  {t.get('category_emoji', '📝')} {t['task_text']}" for t in tasks
-    )
-    return {"type": "tasks", "tasks": tasks, "reply_text": reply}
+
+    reply_lines = [f"✅ *Записала {len(tasks)} задач:*\n"]
+    for t in tasks:
+        emoji = t.get("category_emoji") or "📝"
+        name = t["task_text"]
+        pv = t.get("priority_value", 5)
+        pu = t.get("priority_urgency", 5)
+        pr = t.get("priority_risk", 5)
+        ps = t.get("priority_size", 5)
+        score = min(10, round((pv + pu + pr) / max(ps, 1)))
+        cat = t.get("category_name") or ""
+        parts = [f"📂 {emoji} {cat}"]
+        if t.get("is_routine") and t.get("repeat_day"):
+            parts.append(f"🔁 {t['repeat_day']}")
+        elif t.get("due_date"):
+            parts.append(f"📅 {t['due_date']}")
+        else:
+            parts.append("📅 без срока")
+        parts.append(f"🔥 {score}/10")
+        reply_lines.append(f"📝 «{name}»")
+        reply_lines.append(" | ".join(parts))
+        reply_lines.append("")
+    reply_lines.append("_Всё верно? Если нет — напиши, что исправить._")
+
+    return {"type": "tasks", "tasks": tasks, "reply_text": "\n".join(reply_lines)}
 
 
 def _extract_json_objects(text: str) -> list[dict]:

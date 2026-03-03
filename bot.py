@@ -237,6 +237,46 @@ WEEKDAY_NAMES_RU = {
 }
 
 
+def _build_task_confirmation(
+    ai_result: dict,
+    due_date: str | None,
+    auto_label: str,
+    is_routine: bool,
+) -> str:
+    """Формирует подтверждение задачи в стандартном формате."""
+    task_text = ai_result.get("task_text", "")
+    cat_emoji = ai_result.get("category_emoji", "") or "📝"
+    cat_name = ai_result.get("category_name", "") or "Другое"
+    pv = ai_result.get("priority_value", 5)
+    pu = ai_result.get("priority_urgency", 5)
+    pr = ai_result.get("priority_risk", 5)
+    ps = ai_result.get("priority_size", 5)
+    score = min(10, round((pv + pu + pr) / max(ps, 1)))
+
+    if due_date and auto_label:
+        date_display = f"{auto_label} ({due_date})"
+    elif due_date:
+        date_display = due_date
+    else:
+        date_display = "без срока"
+
+    lines = [
+        "✅ *Задача принята*\n",
+        f"📝 «{task_text}»",
+        f"📂 Категория: {cat_emoji} {cat_name}",
+        f"📅 Срок: {date_display}",
+        f"🔥 Приоритет: {score}/10",
+    ]
+
+    if is_routine:
+        repeat_day = ai_result.get("repeat_day") or "ежедневно"
+        lines.append(f"🔁 Повтор: {repeat_day}")
+
+    lines.append("")
+    lines.append("_Всё верно? Если нет — напиши, что исправить._")
+    return "\n".join(lines)
+
+
 def _auto_schedule_date(user_id: int, priority_score: float) -> tuple[str, str]:
     """Находит ближайший день, где задач меньше лимита. Возвращает (date_str, human_label)."""
     settings = db.get_settings(user_id)
@@ -433,6 +473,7 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     tasks = db.get_today_tasks(user_row["id"])
+    logger.info("/today: user=%s tasks=%d", user_row["id"], len(tasks))
     await _reply(update, _format_today_tasks(tasks))
 
 
@@ -473,6 +514,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def cmd_routines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     tasks = db.get_routine_tasks(user_row["id"])
+    logger.info("/routines: user=%s tasks=%d", user_row["id"], len(tasks))
     await _reply(update, _format_routines(tasks))
 
 
@@ -482,13 +524,14 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     limit = settings.get("max_tasks_per_day", 7)
     auto = settings.get("auto_schedule", True)
     auto_str = "вкл" if auto else "выкл"
+    logger.info("/settings: user=%s settings=%s", user_row["id"], settings)
     text = (
         "⚙️ *Настройки*\n\n"
         f"📊 Задач на день: *{limit}*\n"
         f"📅 Авто-назначение дат: *{auto_str}*\n\n"
-        "_Чтобы изменить, напиши:_\n"
-        "_«Поставь лимит 5 задач на день»_\n"
-        "_«Выключи авто-назначение дат»_"
+        "Чтобы изменить, напиши:\n"
+        "«Поставь лимит 5 задач на день»\n"
+        "«Выключи авто-назначение дат»"
     )
     await _reply(update, text)
 
@@ -525,6 +568,7 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         is_routine = bool(ai_result.get("is_routine", False))
         settings = db.get_settings(user_row["id"])
         schedule_note = ""
+        auto_label = ""
 
         if not due_date and not is_routine and settings.get("auto_schedule", True):
             pv = ai_result.get("priority_value", 5)
@@ -532,10 +576,10 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             pr = ai_result.get("priority_risk", 5)
             ps = ai_result.get("priority_size", 5)
             score = (pv + pu + pr) / max(ps, 1)
-            due_date, label = _auto_schedule_date(user_row["id"], score)
-            schedule_note = f"\n📅 _Поставила на {label}_"
-            hint = _build_overload_hint(user_row["id"], due_date, label)
-            schedule_note += hint
+            due_date, auto_label = _auto_schedule_date(user_row["id"], score)
+            hint = _build_overload_hint(user_row["id"], due_date, auto_label)
+            if hint:
+                schedule_note = hint
 
         try:
             task_row = db.add_task(
@@ -558,6 +602,7 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             logger.exception("Ошибка сохранения задачи: %s", e)
             reply_text += "\n\n⚠️ _Не удалось сохранить задачу. Попробуй ещё раз._"
 
+        reply_text = _build_task_confirmation(ai_result, due_date, auto_label, is_routine)
         if schedule_note:
             reply_text += schedule_note
 
@@ -804,7 +849,7 @@ def main() -> None:
                     pass
 
     app.add_error_handler(on_error)
-    logger.info("Бот запущен (v2.3-bugfix). [меню при старте]")
+    logger.info("Бот запущен (v2.4-fix-routines). [меню при старте]")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
