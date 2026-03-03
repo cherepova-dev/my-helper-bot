@@ -106,11 +106,15 @@ def _init_tables_pg() -> None:
     CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
     CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id);
     """)
-    try:
-        cur.execute("ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE")
-    except Exception:
-        if _conn and not _conn.closed:
-            _conn.rollback()
+    for col_sql in (
+        "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
+    ):
+        try:
+            cur.execute(col_sql)
+        except Exception:
+            if _conn and not _conn.closed:
+                _conn.rollback()
     cur.close()
 
 
@@ -161,11 +165,15 @@ def _init_tables_sqlite() -> None:
     );
     """)
     _conn.commit()
-    try:
-        _conn.execute("ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE")
-        _conn.commit()
-    except Exception:
-        pass
+    for col_sql in (
+        "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
+    ):
+        try:
+            _conn.execute(col_sql)
+            _conn.commit()
+        except Exception:
+            pass
 
 
 # ── Универсальные хелперы ────────────────────────────────────────────────
@@ -322,18 +330,22 @@ def add_task(
     priority_urgency: float = 5,
     priority_risk: float = 5,
     priority_size: float = 5,
+    is_routine: bool = False,
+    repeat_day: str | None = None,
 ) -> dict:
     score = _calc_score(priority_value, priority_urgency, priority_risk, priority_size)
     return _insert_returning(
         """INSERT INTO tasks
            (user_id, text, category_emoji, category_name,
             due_date, due_time, time_of_day,
-            priority_value, priority_urgency, priority_risk, priority_size, priority_score)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            priority_value, priority_urgency, priority_risk, priority_size, priority_score,
+            is_routine, repeat_day)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            RETURNING *""",
         (user_id, text, category_emoji, category_name,
          due_date, due_time, time_of_day,
-         priority_value, priority_urgency, priority_risk, priority_size, score),
+         priority_value, priority_urgency, priority_risk, priority_size, score,
+         is_routine, repeat_day),
     )
 
 
@@ -417,6 +429,7 @@ def update_task(task_id: int, user_id: int, **kwargs) -> dict | None:
         "text", "due_date", "due_time", "time_of_day",
         "category_emoji", "category_name",
         "priority_value", "priority_urgency", "priority_risk", "priority_size",
+        "is_routine", "repeat_day",
     }
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:

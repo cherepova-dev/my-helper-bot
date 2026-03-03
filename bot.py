@@ -61,6 +61,7 @@ HELP_TEXT = (
     "📝 /add — Добавить задачу\n"
     "📋 /tasks — Все активные задачи\n"
     "📅 /today — План на сегодня\n"
+    "🔁 /routines — Рутины по дням\n"
     "✅ /done — Отметить выполненной\n"
     "📈 /report — Отчёт за неделю\n"
     "📜 /history — Выполненные задачи\n"
@@ -85,6 +86,7 @@ BOT_COMMANDS = [
     ("start", "Начать"),
     ("tasks", "Все задачи"),
     ("today", "План на сегодня"),
+    ("routines", "Рутины"),
     ("done", "Отметить выполненной"),
     ("add", "Добавить задачу"),
     ("report", "Отчёт за неделю"),
@@ -129,29 +131,92 @@ def _format_task_list(tasks: list[dict]) -> str:
     if not tasks:
         return "_У тебя пока нет активных задач. Напиши что-нибудь — я запишу!_"
 
-    groups: dict[str, list[str]] = {}
-    for t in tasks:
-        emoji = t.get("category_emoji", "") or "📝"
-        cat = t.get("category_name", "") or "Другое"
-        text = t["text"]
-        extra_parts = []
-        if t.get("due_date"):
-            extra_parts.append(t["due_date"])
-        if t.get("due_time"):
-            extra_parts.append(t["due_time"])
-        elif t.get("time_of_day"):
-            extra_parts.append(t["time_of_day"])
-        extra = f" — _{', '.join(extra_parts)}_" if extra_parts else ""
-        line = f"☐ {emoji} {text}{extra}"
-        key = f"{emoji} *{cat}*"
-        groups.setdefault(key, []).append(line)
+    regular = [t for t in tasks if not t.get("is_routine")]
+    routines = [t for t in tasks if t.get("is_routine")]
 
-    total = sum(len(v) for v in groups.values())
-    lines = [f"📋 *Все задачи ({total})*\n"]
-    for header, items in groups.items():
-        lines.append(header)
-        lines.extend(items)
+    lines = [f"📋 *Все задачи ({len(tasks)})*\n"]
+
+    if regular:
+        groups: dict[str, list[str]] = {}
+        for t in regular:
+            emoji = t.get("category_emoji", "") or "📝"
+            cat = t.get("category_name", "") or "Другое"
+            text = t["text"]
+            extra_parts = []
+            if t.get("due_date"):
+                extra_parts.append(t["due_date"])
+            if t.get("due_time"):
+                extra_parts.append(t["due_time"])
+            elif t.get("time_of_day"):
+                extra_parts.append(t["time_of_day"])
+            extra = f" — _{', '.join(extra_parts)}_" if extra_parts else ""
+            line = f"☐ {emoji} {text}{extra}"
+            key = f"{emoji} *{cat}*"
+            groups.setdefault(key, []).append(line)
+
+        for header, items in groups.items():
+            lines.append(header)
+            lines.extend(items)
+            lines.append("")
+
+    if routines:
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        lines.append("🔁 *Рутины*")
+        for t in routines:
+            emoji = t.get("category_emoji", "") or "🔁"
+            text = t["text"]
+            day = t.get("repeat_day") or ""
+            day_str = f" — _каждый {day}_" if day else ""
+            lines.append(f"☐ {emoji} {text}{day_str}")
         lines.append("")
+
+    return "\n".join(lines)
+
+
+def _format_routines(tasks: list[dict]) -> str:
+    if not tasks:
+        return "_У тебя пока нет рутин. Напиши, например: «Поливать цветы каждый четверг»_"
+
+    DAY_ORDER = {"пн": 0, "вт": 1, "ср": 2, "чт": 3, "пт": 4, "сб": 5, "вс": 6, "ежедневно": 7}
+    DAY_FULL = {
+        "пн": "Понедельник", "вт": "Вторник", "ср": "Среда",
+        "чт": "Четверг", "пт": "Пятница", "сб": "Суббота",
+        "вс": "Воскресенье", "ежедневно": "Ежедневно",
+    }
+
+    by_day: dict[str, list[str]] = {}
+    no_day: list[str] = []
+
+    for t in tasks:
+        emoji = t.get("category_emoji", "") or "🔁"
+        text = t["text"]
+        repeat = (t.get("repeat_day") or "").strip()
+
+        if not repeat:
+            no_day.append(f"☐ {emoji} {text}")
+            continue
+
+        days = [d.strip() for d in repeat.split(",")]
+        for day in days:
+            day_lower = day.lower()
+            key = day_lower if day_lower in DAY_ORDER else "другое"
+            line = f"☐ {emoji} {text}"
+            by_day.setdefault(key, []).append(line)
+
+    lines = ["🔁 *Рутины*\n"]
+
+    sorted_days = sorted(by_day.keys(), key=lambda d: DAY_ORDER.get(d, 99))
+    for day in sorted_days:
+        label = DAY_FULL.get(day, day.capitalize())
+        lines.append(f"*{label}:*")
+        lines.extend(by_day[day])
+        lines.append("")
+
+    if no_day:
+        lines.append("*Без привязки к дню:*")
+        lines.extend(no_day)
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -348,6 +413,12 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _reply(update, _format_history(tasks))
 
 
+async def cmd_routines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_row = db.get_or_create_user(update.effective_user.id)
+    tasks = db.get_routine_tasks(user_row["id"])
+    await _reply(update, _format_routines(tasks))
+
+
 async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     cats = db.get_categories(user_row["id"])
@@ -387,6 +458,8 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             priority_urgency=ai_result.get("priority_urgency", 5),
             priority_risk=ai_result.get("priority_risk", 5),
             priority_size=ai_result.get("priority_size", 5),
+            is_routine=bool(ai_result.get("is_routine", False)),
+            repeat_day=ai_result.get("repeat_day"),
         )
         tips_count = db.increment_tips(user.id)
         tip = _get_tip(tips_count)
@@ -408,6 +481,8 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                 priority_urgency=t.get("priority_urgency", 5),
                 priority_risk=t.get("priority_risk", 5),
                 priority_size=t.get("priority_size", 5),
+                is_routine=bool(t.get("is_routine", False)),
+                repeat_day=t.get("repeat_day"),
             )
             db.increment_tips(user.id)
         tips_count = db.get_tips_shown(user.id)
@@ -562,6 +637,7 @@ def main() -> None:
     app.add_handler(CommandHandler("done", cmd_done))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("history", cmd_history))
+    app.add_handler(CommandHandler("routines", cmd_routines))
     app.add_handler(CommandHandler("categories", cmd_categories))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
@@ -573,7 +649,7 @@ def main() -> None:
             logger.exception("Ошибка: %s", context.error)
 
     app.add_error_handler(on_error)
-    logger.info("Бот запущен (v2). [меню при старте]")
+    logger.info("Бот запущен (v2.1-routines). [меню при старте]")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
