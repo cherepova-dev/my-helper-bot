@@ -310,6 +310,56 @@ def get_tips_shown(telegram_id: int) -> int:
     return row["tips_shown"] if row else 0
 
 
+# ── Settings ──────────────────────────────────────────────────────────────
+
+DEFAULT_SETTINGS = {
+    "max_tasks_per_day": 7,
+    "auto_schedule": True,
+}
+
+
+def get_settings(user_id: int) -> dict:
+    import json as _json
+    row = _fetchone("SELECT settings_json FROM users WHERE id = %s", (user_id,))
+    if not row or not row.get("settings_json"):
+        return dict(DEFAULT_SETTINGS)
+    try:
+        saved = _json.loads(row["settings_json"])
+    except (ValueError, TypeError):
+        saved = {}
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update(saved)
+    return merged
+
+
+def update_settings(user_id: int, **kwargs) -> dict:
+    import json as _json
+    current = get_settings(user_id)
+    current.update(kwargs)
+    _execute(
+        "UPDATE users SET settings_json = %s WHERE id = %s",
+        (_json.dumps(current, ensure_ascii=False), user_id),
+    )
+    return current
+
+
+def count_tasks_for_date(user_id: int, date_str: str) -> int:
+    row = _fetchone(
+        "SELECT COUNT(*) AS cnt FROM tasks "
+        "WHERE user_id = %s AND status = 'active' AND due_date = %s",
+        (user_id, date_str),
+    )
+    return row["cnt"] if row else 0
+
+
+def get_least_priority_task_for_date(user_id: int, date_str: str) -> dict | None:
+    return _fetchone(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+        "AND due_date = %s ORDER BY priority_score ASC LIMIT 1",
+        (user_id, date_str),
+    )
+
+
 # ── Categories ───────────────────────────────────────────────────────────
 
 def get_categories(user_id: int) -> list[dict]:

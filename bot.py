@@ -7,7 +7,7 @@ Telegram-бот: личный AI-ассистент.
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from telegram import Bot, BotCommand, Update
 from telegram.constants import ParseMode
@@ -66,6 +66,7 @@ HELP_TEXT = (
     "📈 /report — Отчёт за неделю\n"
     "📜 /history — Выполненные задачи\n"
     "🗂 /categories — Категории\n"
+    "⚙️ /settings — Настройки\n"
     "🔄 /start — Начать сначала\n\n"
     "_Или просто пиши / диктуй как удобно — я пойму._"
 )
@@ -92,6 +93,7 @@ BOT_COMMANDS = [
     ("report", "Отчёт за неделю"),
     ("history", "Выполненные задачи"),
     ("categories", "Категории"),
+    ("settings", "Настройки"),
     ("help", "Помощь"),
 ]
 
@@ -218,6 +220,52 @@ def _format_routines(tasks: list[dict]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+WEEKDAY_NAMES_RU = {
+    0: "понедельник", 1: "вторник", 2: "среду",
+    3: "четверг", 4: "пятницу", 5: "субботу", 6: "воскресенье",
+}
+
+
+def _auto_schedule_date(user_id: int, priority_score: float) -> tuple[str, str]:
+    """Находит ближайший день, где задач меньше лимита. Возвращает (date_str, human_label)."""
+    settings = db.get_settings(user_id)
+    limit = settings.get("max_tasks_per_day", 7)
+
+    today = datetime.now()
+    for offset in range(7):
+        day = today + timedelta(days=offset)
+        date_str = day.strftime("%Y-%m-%d")
+        count = db.count_tasks_for_date(user_id, date_str)
+        if count < limit:
+            if offset == 0:
+                label = "сегодня"
+            elif offset == 1:
+                label = "завтра"
+            else:
+                wd = WEEKDAY_NAMES_RU.get(day.weekday(), day.strftime("%d.%m"))
+                label = f"в {wd} ({day.strftime('%d.%m')})"
+            return date_str, label
+
+    date_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    return date_str, "завтра"
+
+
+def _build_overload_hint(user_id: int, assigned_date: str, date_label: str) -> str:
+    """Если день уже загружен, возвращает мягкую подсказку. Иначе пустую строку."""
+    settings = db.get_settings(user_id)
+    limit = settings.get("max_tasks_per_day", 7)
+    count = db.count_tasks_for_date(user_id, assigned_date)
+
+    if count < limit - 1:
+        return ""
+
+    least = db.get_least_priority_task_for_date(user_id, assigned_date)
+    hint = f"\n\n⚠️ _На {date_label} уже {count} задач (лимит: {limit})._"
+    if least:
+        hint += f"\n_Наименее срочная: «{least['text']}». Может, перенести её?_"
+    return hint
 
 
 def _format_today_tasks(tasks: list[dict]) -> str:
@@ -419,6 +467,23 @@ async def cmd_routines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await _reply(update, _format_routines(tasks))
 
 
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_row = db.get_or_create_user(update.effective_user.id)
+    settings = db.get_settings(user_row["id"])
+    limit = settings.get("max_tasks_per_day", 7)
+    auto = settings.get("auto_schedule", True)
+    auto_str = "вкл" if auto else "выкл"
+    text = (
+        "⚙️ *Настройки*\n\n"
+        f"📊 Задач на день: *{limit}*\n"
+        f"📅 Авто-назначение дат: *{auto_str}*\n\n"
+        "_Чтобы изменить, напиши:_\n"
+        "_«Поставь лимит 5 задач на день»_\n"
+        "_«Выключи авто-назначение дат»_"
+    )
+    await _reply(update, text)
+
+
 async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     cats = db.get_categories(user_row["id"])
@@ -446,21 +511,41 @@ async def _process_user_text(update: Update, user_text: str) -> None:
     msg_type = ai_result.get("type", "chat")
 
     if msg_type == "task":
+        due_date = ai_result.get("due_date")
+        is_routine = bool(ai_result.get("is_routine", False))
+        settings = db.get_settings(user_row["id"])
+        schedule_note = ""
+
+        if not due_date and not is_routine and settings.get("auto_schedule", True):
+            pv = ai_result.get("priority_value", 5)
+            pu = ai_result.get("priority_urgency", 5)
+            pr = ai_result.get("priority_risk", 5)
+            ps = ai_result.get("priority_size", 5)
+            score = (pv + pu + pr) / max(ps, 1)
+            due_date, label = _auto_schedule_date(user_row["id"], score)
+            schedule_note = f"\n📅 _Поставила на {label}_"
+            hint = _build_overload_hint(user_row["id"], due_date, label)
+            schedule_note += hint
+
         db.add_task(
             user_id=user_row["id"],
             text=ai_result.get("task_text", user_text),
             category_emoji=ai_result.get("category_emoji", ""),
             category_name=ai_result.get("category_name", ""),
-            due_date=ai_result.get("due_date"),
+            due_date=due_date,
             due_time=ai_result.get("due_time"),
             time_of_day=ai_result.get("time_of_day"),
             priority_value=ai_result.get("priority_value", 5),
             priority_urgency=ai_result.get("priority_urgency", 5),
             priority_risk=ai_result.get("priority_risk", 5),
             priority_size=ai_result.get("priority_size", 5),
-            is_routine=bool(ai_result.get("is_routine", False)),
+            is_routine=is_routine,
             repeat_day=ai_result.get("repeat_day"),
         )
+
+        if schedule_note:
+            reply_text += schedule_note
+
         tips_count = db.increment_tips(user.id)
         tip = _get_tip(tips_count)
         if tip:
@@ -468,23 +553,44 @@ async def _process_user_text(update: Update, user_text: str) -> None:
 
     elif msg_type == "tasks":
         task_items = ai_result.get("tasks", [])
+        settings = db.get_settings(user_row["id"])
+        auto = settings.get("auto_schedule", True)
+        scheduled_notes = []
+
         for t in task_items:
+            due_date = t.get("due_date")
+            is_routine = bool(t.get("is_routine", False))
+
+            if not due_date and not is_routine and auto:
+                pv = t.get("priority_value", 5)
+                pu = t.get("priority_urgency", 5)
+                pr = t.get("priority_risk", 5)
+                ps = t.get("priority_size", 5)
+                score = (pv + pu + pr) / max(ps, 1)
+                due_date, label = _auto_schedule_date(user_row["id"], score)
+                task_name = t.get("task_text", "")
+                scheduled_notes.append(f"📅 «{task_name}» → _{label}_")
+
             db.add_task(
                 user_id=user_row["id"],
                 text=t.get("task_text", ""),
                 category_emoji=t.get("category_emoji", ""),
                 category_name=t.get("category_name", ""),
-                due_date=t.get("due_date"),
+                due_date=due_date,
                 due_time=t.get("due_time"),
                 time_of_day=t.get("time_of_day"),
                 priority_value=t.get("priority_value", 5),
                 priority_urgency=t.get("priority_urgency", 5),
                 priority_risk=t.get("priority_risk", 5),
                 priority_size=t.get("priority_size", 5),
-                is_routine=bool(t.get("is_routine", False)),
+                is_routine=is_routine,
                 repeat_day=t.get("repeat_day"),
             )
             db.increment_tips(user.id)
+
+        if scheduled_notes:
+            reply_text += "\n\n" + "\n".join(scheduled_notes)
+
         tips_count = db.get_tips_shown(user.id)
         tip = _get_tip(tips_count)
         if tip:
@@ -554,6 +660,19 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             reply_text = f"🗑 *Удалено:* «{found['text']}»\n\n_Готово, задача убрана из списка._"
         else:
             reply_text = "_Не нашла задачу для удаления. Покажи список_ (/tasks) _и уточни._"
+
+    elif msg_type == "settings_update":
+        changes = ai_result.get("settings", {})
+        if changes:
+            db.update_settings(user_row["id"], **changes)
+            settings = db.get_settings(user_row["id"])
+            limit = settings.get("max_tasks_per_day", 7)
+            auto = "вкл" if settings.get("auto_schedule", True) else "выкл"
+            reply_text = (
+                "⚙️ *Настройки обновлены*\n\n"
+                f"📊 Задач на день: *{limit}*\n"
+                f"📅 Авто-назначение дат: *{auto}*"
+            )
 
     db.save_message(user_row["id"], "assistant", reply_text)
     await _reply(update, reply_text)
@@ -639,6 +758,7 @@ def main() -> None:
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("routines", cmd_routines))
     app.add_handler(CommandHandler("categories", cmd_categories))
+    app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
