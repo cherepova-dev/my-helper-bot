@@ -1,1 +1,1 @@
-20260303-v2.2-auto-schedule
+20260303-v2.3-bugfix

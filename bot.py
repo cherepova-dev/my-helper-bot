@@ -105,6 +105,13 @@ async def _reply(update: Update, text: str, max_retries: int = 3) -> None:
         try:
             await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
             return
+        except (TimedOut, NetworkError) as e:
+            if attempt < max_retries:
+                wait = 2 ** attempt
+                logger.info("Retry %s/%s через %sс (%s)", attempt + 1, max_retries, wait, type(e).__name__)
+                await asyncio.sleep(wait)
+            else:
+                logger.warning("Не удалось отправить после %s попыток: %s", max_retries + 1, e)
         except Exception:
             try:
                 await update.message.reply_text(text)
@@ -112,10 +119,12 @@ async def _reply(update: Update, text: str, max_retries: int = 3) -> None:
             except (TimedOut, NetworkError) as e:
                 if attempt < max_retries:
                     wait = 2 ** attempt
-                    logger.info("Retry %s/%s через %sс (%s)", attempt + 1, max_retries, wait, type(e).__name__)
                     await asyncio.sleep(wait)
                 else:
-                    logger.warning("Не удалось отправить после %s попыток: %s", max_retries + 1, e)
+                    logger.warning("Не удалось отправить (plain) после %s попыток: %s", max_retries + 1, e)
+            except Exception as e2:
+                logger.warning("Ошибка отправки: %s", e2)
+                return
 
 
 def _get_tip(tips_shown: int) -> str | None:
@@ -509,6 +518,7 @@ async def _process_user_text(update: Update, user_text: str) -> None:
 
     reply_text = ai_result.get("reply_text", "Записано.")
     msg_type = ai_result.get("type", "chat")
+    logger.info("AI type=%s для '%s'", msg_type, user_text[:60])
 
     if msg_type == "task":
         due_date = ai_result.get("due_date")
@@ -527,21 +537,26 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             hint = _build_overload_hint(user_row["id"], due_date, label)
             schedule_note += hint
 
-        db.add_task(
-            user_id=user_row["id"],
-            text=ai_result.get("task_text", user_text),
-            category_emoji=ai_result.get("category_emoji", ""),
-            category_name=ai_result.get("category_name", ""),
-            due_date=due_date,
-            due_time=ai_result.get("due_time"),
-            time_of_day=ai_result.get("time_of_day"),
-            priority_value=ai_result.get("priority_value", 5),
-            priority_urgency=ai_result.get("priority_urgency", 5),
-            priority_risk=ai_result.get("priority_risk", 5),
-            priority_size=ai_result.get("priority_size", 5),
-            is_routine=is_routine,
-            repeat_day=ai_result.get("repeat_day"),
-        )
+        try:
+            task_row = db.add_task(
+                user_id=user_row["id"],
+                text=ai_result.get("task_text", user_text),
+                category_emoji=ai_result.get("category_emoji", ""),
+                category_name=ai_result.get("category_name", ""),
+                due_date=due_date,
+                due_time=ai_result.get("due_time"),
+                time_of_day=ai_result.get("time_of_day"),
+                priority_value=ai_result.get("priority_value", 5),
+                priority_urgency=ai_result.get("priority_urgency", 5),
+                priority_risk=ai_result.get("priority_risk", 5),
+                priority_size=ai_result.get("priority_size", 5),
+                is_routine=is_routine,
+                repeat_day=ai_result.get("repeat_day"),
+            )
+            logger.info("Задача сохранена id=%s text='%s'", task_row.get("id") if task_row else "?", ai_result.get("task_text", "")[:40])
+        except Exception as e:
+            logger.exception("Ошибка сохранения задачи: %s", e)
+            reply_text += "\n\n⚠️ _Не удалось сохранить задачу. Попробуй ещё раз._"
 
         if schedule_note:
             reply_text += schedule_note
@@ -556,6 +571,7 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         settings = db.get_settings(user_row["id"])
         auto = settings.get("auto_schedule", True)
         scheduled_notes = []
+        saved_count = 0
 
         for t in task_items:
             due_date = t.get("due_date")
@@ -571,22 +587,29 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                 task_name = t.get("task_text", "")
                 scheduled_notes.append(f"📅 «{task_name}» → _{label}_")
 
-            db.add_task(
-                user_id=user_row["id"],
-                text=t.get("task_text", ""),
-                category_emoji=t.get("category_emoji", ""),
-                category_name=t.get("category_name", ""),
-                due_date=due_date,
-                due_time=t.get("due_time"),
-                time_of_day=t.get("time_of_day"),
-                priority_value=t.get("priority_value", 5),
-                priority_urgency=t.get("priority_urgency", 5),
-                priority_risk=t.get("priority_risk", 5),
-                priority_size=t.get("priority_size", 5),
-                is_routine=is_routine,
-                repeat_day=t.get("repeat_day"),
-            )
+            try:
+                db.add_task(
+                    user_id=user_row["id"],
+                    text=t.get("task_text", ""),
+                    category_emoji=t.get("category_emoji", ""),
+                    category_name=t.get("category_name", ""),
+                    due_date=due_date,
+                    due_time=t.get("due_time"),
+                    time_of_day=t.get("time_of_day"),
+                    priority_value=t.get("priority_value", 5),
+                    priority_urgency=t.get("priority_urgency", 5),
+                    priority_risk=t.get("priority_risk", 5),
+                    priority_size=t.get("priority_size", 5),
+                    is_routine=is_routine,
+                    repeat_day=t.get("repeat_day"),
+                )
+                saved_count += 1
+            except Exception as e:
+                logger.exception("Ошибка сохранения задачи '%s': %s", t.get("task_text", ""), e)
             db.increment_tips(user.id)
+
+        if saved_count < len(task_items):
+            reply_text += f"\n\n⚠️ _Сохранено {saved_count} из {len(task_items)} задач._"
 
         if scheduled_notes:
             reply_text += "\n\n" + "\n".join(scheduled_notes)
@@ -654,10 +677,15 @@ async def _process_user_text(update: Update, user_text: str) -> None:
 
     elif msg_type == "delete":
         search = ai_result.get("search_text", "")
+        logger.info("Удаление: search_text='%s'", search)
         found = db.find_task_by_text(user_row["id"], search)
         if found:
-            db.delete_task(found["id"], user_row["id"])
-            reply_text = f"🗑 *Удалено:* «{found['text']}»\n\n_Готово, задача убрана из списка._"
+            ok = db.delete_task(found["id"], user_row["id"])
+            logger.info("delete_task id=%s ok=%s", found["id"], ok)
+            if ok:
+                reply_text = f"🗑 *Удалено:* «{found['text']}»\n\n_Готово, задача убрана из списка._"
+            else:
+                reply_text = f"⚠️ Задача «{found['text']}» уже была удалена или завершена."
         else:
             reply_text = "_Не нашла задачу для удаления. Покажи список_ (/tasks) _и уточни._"
 
@@ -767,9 +795,16 @@ def main() -> None:
             logger.warning("Сетевая ошибка Telegram: %s", context.error)
         else:
             logger.exception("Ошибка: %s", context.error)
+            if isinstance(update, Update) and update.message:
+                try:
+                    await update.message.reply_text(
+                        "⚠️ Произошла ошибка. Попробуй ещё раз через пару секунд."
+                    )
+                except Exception:
+                    pass
 
     app.add_error_handler(on_error)
-    logger.info("Бот запущен (v2.1-routines). [меню при старте]")
+    logger.info("Бот запущен (v2.3-bugfix). [меню при старте]")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
