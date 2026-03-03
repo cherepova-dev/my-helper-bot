@@ -561,7 +561,11 @@ async def _process_user_text(update: Update, user_text: str) -> None:
 
     reply_text = ai_result.get("reply_text", "Записано.")
     msg_type = ai_result.get("type", "chat")
-    logger.info("AI type=%s для '%s'", msg_type, user_text[:60])
+    has_tasks = "tasks" in ai_result and isinstance(ai_result.get("tasks"), list)
+    logger.info("AI type=%s has_tasks=%s task_count=%s для '%s'",
+                msg_type, has_tasks,
+                len(ai_result.get("tasks", [])) if has_tasks else 0,
+                user_text[:60])
 
     if msg_type == "task":
         due_date = ai_result.get("due_date")
@@ -621,6 +625,9 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         for t in task_items:
             due_date = t.get("due_date")
             is_routine = bool(t.get("is_routine", False))
+            repeat_day = t.get("repeat_day")
+            logger.info("tasks item: text='%s' is_routine=%s repeat_day=%s keys=%s",
+                         t.get("task_text", "")[:30], is_routine, repeat_day, list(t.keys()))
 
             if not due_date and not is_routine and auto:
                 pv = t.get("priority_value", 5)

@@ -383,8 +383,10 @@ def add_task(
     is_routine: bool = False,
     repeat_day: str | None = None,
 ) -> dict:
+    logger.info("add_task: text='%s' is_routine=%s repeat_day=%s due_date=%s",
+                text[:40], is_routine, repeat_day, due_date)
     score = _calc_score(priority_value, priority_urgency, priority_risk, priority_size)
-    return _insert_returning(
+    result = _insert_returning(
         """INSERT INTO tasks
            (user_id, text, category_emoji, category_name,
             due_date, due_time, time_of_day,
@@ -397,6 +399,9 @@ def add_task(
          priority_value, priority_urgency, priority_risk, priority_size, score,
          is_routine, repeat_day),
     )
+    if result:
+        logger.info("add_task OK: id=%s is_routine=%s", result.get("id"), result.get("is_routine"))
+    return result
 
 
 def get_active_tasks(user_id: int) -> list[dict]:
@@ -567,11 +572,19 @@ def get_weekly_stats(user_id: int) -> dict:
 
 
 def get_routine_tasks(user_id: int) -> list[dict]:
-    return _fetchall(
+    result = _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
         "AND is_routine = TRUE ORDER BY priority_score DESC",
         (user_id,),
     )
+    logger.info("get_routine_tasks: user=%s found=%d", user_id, len(result))
+    if not result:
+        all_tasks = _fetchall(
+            "SELECT id, text, is_routine, repeat_day, status FROM tasks WHERE user_id = %s ORDER BY id DESC LIMIT 10",
+            (user_id,),
+        )
+        logger.info("get_routine_tasks debug: last 10 tasks=%s", all_tasks)
+    return result
 
 
 def _calc_score(value: float, urgency: float, risk: float, size: float) -> float:
