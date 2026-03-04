@@ -573,6 +573,32 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         msg_type = "task"
         ai_result["type"] = "task"
 
+    if msg_type == "chat" and not has_tasks:
+        _TASK_MARKERS = (
+            "запиши", "добавь", "поставь задачу", "нужно ", "надо ",
+            "сделать", "купить", "позвонить", "записаться", "заказать",
+            "написать ", "забрать", "отвезти", "приготовить", "напомни",
+        )
+        lower = user_text.lower()
+        if any(m in lower for m in _TASK_MARKERS):
+            logger.warning("AI вернул chat, но текст содержит маркеры задачи — повторный запрос")
+            ai_result2 = ai_module.process_message(
+                f"[СИСТЕМНАЯ ИНСТРУКЦИЯ: пользователь даёт задачу. Ответь СТРОГО type='task'. Извлеки задачу.]\n{user_text}",
+                active_tasks, recent,
+            )
+            msg_type2 = ai_result2.get("type", "chat")
+            if msg_type2 in ("task", "tasks") or ai_result2.get("task_text"):
+                ai_result = ai_result2
+                msg_type = ai_result2.get("type", "task")
+                if msg_type == "chat":
+                    msg_type = "task"
+                    ai_result["type"] = "task"
+                has_tasks = "tasks" in ai_result and isinstance(ai_result.get("tasks"), list)
+                reply_text = ai_result.get("reply_text", "Записано.")
+                logger.info("Повторный AI: type=%s task_text='%s'", msg_type, ai_result.get("task_text", "")[:40])
+            else:
+                logger.info("Повторный AI тоже вернул chat — оставляем как есть")
+
     logger.info("AI type=%s has_tasks=%s task_count=%s для '%s'",
                 msg_type, has_tasks,
                 len(ai_result.get("tasks", [])) if has_tasks else 0,

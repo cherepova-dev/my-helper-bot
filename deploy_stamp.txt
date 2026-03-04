@@ -1,1 +1,1 @@
-20260304-v2.5-fix-ai-type
+20260304-v2.5.1-retry-task-detection
