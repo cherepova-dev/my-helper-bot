@@ -553,6 +553,27 @@ async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _reply(update, "\n".join(lines))
 
 
+def _detect_action_type(lower_text: str) -> str | None:
+    _EDIT_MARKERS = ("измени", "поменяй", "перенеси", "обнови", "исправь задачу",
+                     "передвинь", "сдвинь", "перепланируй")
+    _DELETE_MARKERS = ("удали", "убери", "отмени задачу", "сотри", "удалить")
+    _DONE_MARKERS = ("отметь", "выполнено", "сделано", "готово", "выполнила",
+                     "сделала", "выполнил", "сделал")
+    _TASK_MARKERS = ("запиши", "добавь", "поставь задачу", "нужно ", "надо ",
+                     "сделать", "купить", "позвонить", "записаться", "заказать",
+                     "написать ", "забрать", "отвезти", "приготовить", "напомни",
+                     "закажи", "запланируй")
+    if any(m in lower_text for m in _EDIT_MARKERS):
+        return "Пользователь хочет ИЗМЕНИТЬ существующую задачу. Ответь СТРОГО type='edit'. Найди задачу по search_text и укажи updates."
+    if any(m in lower_text for m in _DELETE_MARKERS):
+        return "Пользователь хочет УДАЛИТЬ задачу. Ответь СТРОГО type='delete'. Укажи search_text для поиска задачи."
+    if any(m in lower_text for m in _DONE_MARKERS):
+        return "Пользователь отмечает задачу как выполненную. Ответь СТРОГО type='done' (или 'done_multiple' для нескольких). Укажи search_text."
+    if any(m in lower_text for m in _TASK_MARKERS):
+        return "Пользователь даёт задачу. Ответь СТРОГО type='task'. Извлеки задачу."
+    return None
+
+
 async def _process_user_text(update: Update, user_text: str) -> None:
     user = update.effective_user
     user_row = db.get_or_create_user(user.id, user.first_name or "")
@@ -574,28 +595,28 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         ai_result["type"] = "task"
 
     if msg_type == "chat" and not has_tasks:
-        _TASK_MARKERS = (
-            "запиши", "добавь", "поставь задачу", "нужно ", "надо ",
-            "сделать", "купить", "позвонить", "записаться", "заказать",
-            "написать ", "забрать", "отвезти", "приготовить", "напомни",
-        )
         lower = user_text.lower()
-        if any(m in lower for m in _TASK_MARKERS):
-            logger.warning("AI вернул chat, но текст содержит маркеры задачи — повторный запрос")
+        retry_instruction = _detect_action_type(lower)
+        if retry_instruction:
+            logger.warning("AI вернул chat, но обнаружен маркер действия — повторный запрос (%s)", retry_instruction[:40])
             ai_result2 = ai_module.process_message(
-                f"[СИСТЕМНАЯ ИНСТРУКЦИЯ: пользователь даёт задачу. Ответь СТРОГО type='task'. Извлеки задачу.]\n{user_text}",
+                f"[СИСТЕМНАЯ ИНСТРУКЦИЯ: {retry_instruction}]\n{user_text}",
                 active_tasks, recent,
             )
             msg_type2 = ai_result2.get("type", "chat")
-            if msg_type2 in ("task", "tasks") or ai_result2.get("task_text"):
+            if msg_type2 != "chat":
                 ai_result = ai_result2
-                msg_type = ai_result2.get("type", "task")
-                if msg_type == "chat":
-                    msg_type = "task"
-                    ai_result["type"] = "task"
+                msg_type = msg_type2
                 has_tasks = "tasks" in ai_result and isinstance(ai_result.get("tasks"), list)
                 reply_text = ai_result.get("reply_text", "Записано.")
-                logger.info("Повторный AI: type=%s task_text='%s'", msg_type, ai_result.get("task_text", "")[:40])
+                logger.info("Повторный AI: type=%s", msg_type)
+            elif ai_result2.get("task_text"):
+                ai_result = ai_result2
+                msg_type = "task"
+                ai_result["type"] = "task"
+                has_tasks = False
+                reply_text = ai_result.get("reply_text", "Записано.")
+                logger.info("Повторный AI: принудительно task, task_text='%s'", ai_result.get("task_text", "")[:40])
             else:
                 logger.info("Повторный AI тоже вернул chat — оставляем как есть")
 
