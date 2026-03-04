@@ -590,6 +590,7 @@ async def _process_user_text(update: Update, user_text: str) -> None:
             if hint:
                 schedule_note = hint
 
+        task_saved = False
         try:
             task_row = db.add_task(
                 user_id=user_row["id"],
@@ -606,14 +607,17 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                 is_routine=is_routine,
                 repeat_day=ai_result.get("repeat_day"),
             )
+            task_saved = task_row is not None
             logger.info("Задача сохранена id=%s text='%s'", task_row.get("id") if task_row else "?", ai_result.get("task_text", "")[:40])
         except Exception as e:
             logger.exception("Ошибка сохранения задачи: %s", e)
-            reply_text += "\n\n⚠️ _Не удалось сохранить задачу. Попробуй ещё раз._"
 
-        reply_text = _build_task_confirmation(ai_result, due_date, auto_label, is_routine)
-        if schedule_note:
-            reply_text += schedule_note
+        if task_saved:
+            reply_text = _build_task_confirmation(ai_result, due_date, auto_label, is_routine)
+            if schedule_note:
+                reply_text += schedule_note
+        else:
+            reply_text = "⚠️ _Не удалось сохранить задачу. Попробуй ещё раз через пару секунд._"
 
         tips_count = db.increment_tips(user.id)
         tip = _get_tip(tips_count)
