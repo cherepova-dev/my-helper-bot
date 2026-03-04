@@ -567,6 +567,12 @@ async def _process_user_text(update: Update, user_text: str) -> None:
     reply_text = ai_result.get("reply_text", "Записано.")
     msg_type = ai_result.get("type", "chat")
     has_tasks = "tasks" in ai_result and isinstance(ai_result.get("tasks"), list)
+
+    if msg_type == "chat" and ai_result.get("task_text"):
+        logger.info("AI вернул chat, но есть task_text='%s' — переключаю на task", ai_result["task_text"][:40])
+        msg_type = "task"
+        ai_result["type"] = "task"
+
     logger.info("AI type=%s has_tasks=%s task_count=%s для '%s'",
                 msg_type, has_tasks,
                 len(ai_result.get("tasks", [])) if has_tasks else 0,

@@ -1,1 +1,1 @@
-20260304-v2.4.3-fix-save-confirm
+20260304-v2.5-fix-ai-type
