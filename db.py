@@ -433,6 +433,7 @@ def complete_task(task_id: int, user_id: int | None = None) -> bool:
             "UPDATE tasks SET status = 'done', completed_at = %s WHERE id = %s AND status = 'active'",
             (now, task_id),
         )
+    logger.info("complete_task: task_id=%s user_id=%s rows_updated=%s", task_id, user_id, n)
     return n > 0
 
 

@@ -467,6 +467,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     tasks = db.get_active_tasks(user_row["id"])
+    logger.info("/tasks: user_id=%s tg_id=%s active_tasks=%d",
+                user_row["id"], update.effective_user.id, len(tasks))
+    for t in tasks[:5]:
+        logger.info("  task id=%s text='%s' status=%s is_routine=%s",
+                     t.get("id"), t.get("text", "")[:30], t.get("status"), t.get("is_routine"))
     await _reply(update, _format_task_list(tasks))
 
 
@@ -675,9 +680,14 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         search = ai_result.get("search_text", "")
         found = db.find_task_by_text(user_row["id"], search)
         if found:
-            db.complete_task(found["id"], user_id=user_row["id"])
-            reply_text = f"✅ Отмечено: «{found['text']}»\n\n_Молодец! Одним делом меньше._"
+            ok = db.complete_task(found["id"], user_id=user_row["id"])
+            logger.info("complete_task: id=%s text='%s' ok=%s", found["id"], found["text"][:30], ok)
+            if ok:
+                reply_text = f"✅ Отмечено: «{found['text']}»\n\n_Молодец! Одним делом меньше._"
+            else:
+                reply_text = f"⚠️ Задача «{found['text']}» уже была отмечена ранее."
         else:
+            logger.info("complete_task: не нашла задачу для search='%s'", search)
             reply_text = "_Не нашла такую задачу. Покажи список_ (/tasks) _и уточни._"
 
     elif msg_type == "done_multiple":
