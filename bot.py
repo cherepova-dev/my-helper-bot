@@ -658,23 +658,53 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                 msg_type = detected_action
                 action_handled = True
         elif detected_action == "task":
-            logger.warning("AI вернул chat, но обнаружен маркер задачи — повторный запрос")
-            ai_result2 = ai_module.process_message(
-                f"[СИСТЕМНАЯ ИНСТРУКЦИЯ: пользователь даёт задачу. Ответь СТРОГО type='task'. Извлеки задачу.]\n{user_text}",
-                active_tasks, recent,
-            )
-            msg_type2 = ai_result2.get("type", "chat")
-            if msg_type2 in ("task", "tasks") or ai_result2.get("task_text"):
-                ai_result = ai_result2
-                msg_type = ai_result2.get("type", "task")
-                if msg_type == "chat":
-                    msg_type = "task"
-                    ai_result["type"] = "task"
-                has_tasks = "tasks" in ai_result and isinstance(ai_result.get("tasks"), list)
-                reply_text = ai_result.get("reply_text", "Записано.")
-                logger.info("Повторный AI: type=%s task_text='%s'", msg_type, ai_result.get("task_text", "")[:40])
-            else:
-                logger.info("Повторный AI тоже вернул chat — оставляем как есть")
+            task_text = _extract_search_text(user_text).strip()
+            if not task_text:
+                task_text = user_text.strip()
+            logger.warning("AI вернул chat для задачи — прямое сохранение: '%s'", task_text[:60])
+            settings = db.get_settings(user_row["id"])
+            due_date = None
+            auto_label = ""
+            if settings.get("auto_schedule", True):
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                today_count = sum(1 for t in active_tasks if t.get("due_date") == today_str and not t.get("is_routine"))
+                max_per_day = settings.get("max_tasks_per_day", 7)
+                if today_count < max_per_day:
+                    due_date = today_str
+                    auto_label = "сегодня"
+                else:
+                    due_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                    auto_label = "завтра"
+            try:
+                task_row = db.add_task(
+                    user_id=user_row["id"],
+                    text=task_text,
+                    category_emoji="📝",
+                    category_name="Другое",
+                    due_date=due_date,
+                    priority_value=5,
+                    priority_urgency=5,
+                    priority_risk=5,
+                    priority_size=5,
+                )
+                if task_row:
+                    date_display = f"{auto_label} ({due_date})" if due_date and auto_label else (due_date or "без срока")
+                    reply_text = (
+                        f"✅ *Задача принята*\n\n"
+                        f"📝 «{task_text}»\n"
+                        f"📂 Категория: 📝 Другое\n"
+                        f"📅 Срок: {date_display}\n"
+                        f"🔥 Приоритет: 5/10\n\n"
+                        f"_Всё верно? Если нет — напиши, что исправить._"
+                    )
+                    logger.info("Прямое сохранение задачи: id=%s text='%s'", task_row.get("id"), task_text[:40])
+                else:
+                    reply_text = "⚠️ _Не удалось сохранить задачу. Попробуй ещё раз._"
+            except Exception as e:
+                logger.exception("Ошибка прямого сохранения задачи: %s", e)
+                reply_text = "⚠️ _Не удалось сохранить задачу. Попробуй ещё раз._"
+            msg_type = "task"
+            action_handled = True
 
     logger.info("AI type=%s has_tasks=%s task_count=%s handled=%s для '%s'",
                 msg_type, has_tasks,

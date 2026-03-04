@@ -1,1 +1,1 @@
-20260304-v2.9-no-json-leak-normalize-keys
+20260304-v3.0-direct-task-save-fallback
