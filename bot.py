@@ -591,6 +591,87 @@ def _extract_search_text(user_text: str) -> str:
     return result
 
 
+def _extract_task_text_for_save(user_text: str) -> str:
+    """Extract task text for direct save — only strips command prefixes, keeps the rest."""
+    import re
+    text = user_text.strip()
+    prefix_markers = ("запиши", "добавь", "поставь задачу", "запланируй", "закажи")
+    lower = text.lower()
+    for marker in sorted(prefix_markers, key=len, reverse=True):
+        if lower.startswith(marker):
+            text = text[len(marker):].strip()
+            lower = text.lower()
+            break
+    text = re.sub(r'^(?:новую\s+)?задач[уа]\.?\s*', '', text, flags=re.IGNORECASE).strip()
+    if not text:
+        text = user_text.strip()
+    return text
+
+
+def _parse_due_date_from_text(text: str) -> str | None:
+    """Try to parse a due date from Russian text. Returns YYYY-MM-DD or None."""
+    import re
+    lower = text.lower()
+    today = datetime.now()
+
+    if "сегодня" in lower:
+        return today.strftime("%Y-%m-%d")
+    if "послезавтра" in lower:
+        return (today + timedelta(days=2)).strftime("%Y-%m-%d")
+    if "завтра" in lower:
+        return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    m = re.search(r'через\s+(\d+)\s+(?:день|дня|дней)', lower)
+    if m:
+        return (today + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
+
+    weekdays = {
+        "понедельник": 0, "вторник": 1, "среду": 2, "среда": 2,
+        "четверг": 3, "пятницу": 4, "пятница": 4,
+        "субботу": 5, "суббота": 5, "воскресенье": 6,
+    }
+    for name, wd in weekdays.items():
+        if name in lower:
+            days_ahead = wd - today.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+    m = re.search(r'(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?', lower)
+    if m:
+        day, month = int(m.group(1)), int(m.group(2))
+        year = int(m.group(3)) if m.group(3) else today.year
+        if year < 100:
+            year += 2000
+        try:
+            return datetime(year, month, day).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+
+    return None
+
+
+def _parse_due_time_from_text(text: str) -> str | None:
+    """Try to parse time from Russian text. Returns HH:MM or None."""
+    import re
+    lower = text.lower()
+    m = re.search(r'в\s+(\d{1,2})[\s:.](\d{2})', lower)
+    if m:
+        return f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
+    m = re.search(r'в\s+(\d{1,2})\s+(?:утра|часов|часа|час|дня|вечера|ночи)', lower)
+    if m:
+        hour = int(m.group(1))
+        if "вечера" in lower and hour < 12:
+            hour += 12
+        if "ночи" in lower and hour < 12:
+            hour += 12 if hour != 12 else 0
+        return f"{hour:02d}:00"
+    m = re.search(r'(\d{1,2}):(\d{2})', lower)
+    if m:
+        return f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
+    return None
+
+
 async def _process_user_text(update: Update, user_text: str) -> None:
     user = update.effective_user
     user_row = db.get_or_create_user(user.id, user.first_name or "")
@@ -658,14 +739,16 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                 msg_type = detected_action
                 action_handled = True
         elif detected_action == "task":
-            task_text = _extract_search_text(user_text).strip()
-            if not task_text:
-                task_text = user_text.strip()
+            task_text = _extract_task_text_for_save(user_text)
             logger.warning("AI вернул chat для задачи — прямое сохранение: '%s'", task_text[:60])
             settings = db.get_settings(user_row["id"])
-            due_date = None
+            parsed_date = _parse_due_date_from_text(user_text)
+            parsed_time = _parse_due_time_from_text(user_text)
+            due_date = parsed_date
             auto_label = ""
-            if settings.get("auto_schedule", True):
+            if parsed_date:
+                auto_label = "указана"
+            elif settings.get("auto_schedule", True):
                 today_str = datetime.now().strftime("%Y-%m-%d")
                 today_count = sum(1 for t in active_tasks if t.get("due_date") == today_str and not t.get("is_routine"))
                 max_per_day = settings.get("max_tasks_per_day", 7)
@@ -682,18 +765,25 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                     category_emoji="📝",
                     category_name="Другое",
                     due_date=due_date,
+                    due_time=parsed_time,
                     priority_value=5,
                     priority_urgency=5,
                     priority_risk=5,
                     priority_size=5,
                 )
                 if task_row:
-                    date_display = f"{auto_label} ({due_date})" if due_date and auto_label else (due_date or "без срока")
+                    if auto_label == "указана":
+                        date_display = due_date
+                    elif due_date and auto_label:
+                        date_display = f"{auto_label} ({due_date})"
+                    else:
+                        date_display = due_date or "без срока"
+                    time_display = f" в {parsed_time}" if parsed_time else ""
                     reply_text = (
                         f"✅ *Задача принята*\n\n"
                         f"📝 «{task_text}»\n"
                         f"📂 Категория: 📝 Другое\n"
-                        f"📅 Срок: {date_display}\n"
+                        f"📅 Срок: {date_display}{time_display}\n"
                         f"🔥 Приоритет: 5/10\n\n"
                         f"_Всё верно? Если нет — напиши, что исправить._"
                     )

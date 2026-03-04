@@ -1,1 +1,1 @@
-20260304-v3.0-direct-task-save-fallback
+20260304-v3.1-direct-task-save-with-date-parsing
