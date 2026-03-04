@@ -880,6 +880,8 @@ async def _process_user_text(update: Update, user_text: str) -> None:
                 f"📅 Авто-назначение дат: *{auto}*"
             )
 
+    if reply_text and (reply_text.strip().startswith("{") or reply_text.strip().startswith("[")):
+        reply_text = "Не удалось добавить задачу. Напиши ещё раз, пожалуйста: что сделать и когда."
     db.save_message(user_row["id"], "assistant", reply_text)
     await _reply(update, reply_text)
 

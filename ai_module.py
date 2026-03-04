@@ -410,16 +410,52 @@ def process_message(
         }
 
 
+_KEY_ALIASES = [
+    ("tasktext", "task_text"),
+    ("categoryemoji", "category_emoji"),
+    ("categoryname", "category_name"),
+    ("duedate", "due_date"),
+    ("duetime", "due_time"),
+    ("timeofday", "time_of_day"),
+    ("isroutine", "is_routine"),
+    ("repeatday", "repeat_day"),
+    ("priorityvalue", "priority_value"),
+    ("priorityurgency", "priority_urgency"),
+    ("priorityrisk", "priority_risk"),
+    ("prioritysize", "priority_size"),
+    ("searchtext", "search_text"),
+]
+
+
+def _normalize_ai_dict(d: dict) -> None:
+    """Копирует значения из альтернативных ключей (без подчёркивания) в ожидаемые."""
+    for wrong, right in _KEY_ALIASES:
+        if wrong in d and right not in d:
+            d[right] = d[wrong]
+
+
+def _looks_like_json(s: str) -> bool:
+    """Проверяет, похожа ли строка на JSON (не показывать пользователю)."""
+    s = (s or "").strip()
+    return s.startswith("{") or s.startswith("[")
+
+
 def _parse_ai_response(raw: str) -> dict:
     """Парсит ответ AI: одиночный JSON, массив, или несколько JSON подряд."""
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    _normalize_ai_dict(item)
             return _merge_task_list(parsed)
         if isinstance(parsed, dict):
+            _normalize_ai_dict(parsed)
             if "type" not in parsed:
                 parsed["type"] = "chat"
             if "reply_text" not in parsed:
+                parsed["reply_text"] = "Записано."
+            if parsed.get("reply_text") and _looks_like_json(parsed["reply_text"]):
                 parsed["reply_text"] = "Записано."
             return parsed
     except json.JSONDecodeError:
@@ -427,6 +463,8 @@ def _parse_ai_response(raw: str) -> dict:
 
     objects = _extract_json_objects(raw)
     if objects:
+        for obj in objects:
+            _normalize_ai_dict(obj)
         tasks = [o for o in objects if o.get("type") == "task"]
         if tasks:
             return _merge_task_list(tasks)
@@ -504,15 +542,24 @@ def _extract_json_objects(text: str) -> list[dict]:
 
 def _extract_text_from_raw(raw: str) -> str:
     """Пытается вытащить reply_text из сырого ответа, если JSON невалидный."""
+    safe_fallback = "Не удалось разобрать ответ. Напиши задачу короче: что сделать и когда."
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
-            return parsed.get("reply_text", raw)
+            text = parsed.get("reply_text", "")
+            if text and not _looks_like_json(text):
+                return text
+            return safe_fallback
     except (json.JSONDecodeError, TypeError):
         pass
     for obj in _extract_json_objects(raw):
         if "reply_text" in obj:
-            return obj["reply_text"]
+            text = obj["reply_text"]
+            if text and not _looks_like_json(text):
+                return text
+            return safe_fallback
+    if _looks_like_json(raw):
+        return safe_fallback
     return raw
 
 
