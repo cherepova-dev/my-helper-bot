@@ -553,25 +553,42 @@ async def cmd_categories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _reply(update, "\n".join(lines))
 
 
+_EDIT_MARKERS = ("измени", "поменяй", "перенеси", "обнови", "исправь задачу",
+                 "передвинь", "сдвинь", "перепланируй")
+_DELETE_MARKERS = ("удали", "убери", "отмени задачу", "сотри", "удалить")
+_DONE_MARKERS = ("отметь", "выполнено", "сделано", "готово", "выполнила",
+                 "сделала", "выполнил", "сделал")
+_TASK_MARKERS = ("запиши", "добавь", "поставь задачу", "нужно ", "надо ",
+                 "сделать", "купить", "позвонить", "записаться", "заказать",
+                 "написать ", "забрать", "отвезти", "приготовить", "напомни",
+                 "закажи", "запланируй")
+_ALL_ACTION_MARKERS = _EDIT_MARKERS + _DELETE_MARKERS + _DONE_MARKERS
+
+
 def _detect_action_type(lower_text: str) -> str | None:
-    _EDIT_MARKERS = ("измени", "поменяй", "перенеси", "обнови", "исправь задачу",
-                     "передвинь", "сдвинь", "перепланируй")
-    _DELETE_MARKERS = ("удали", "убери", "отмени задачу", "сотри", "удалить")
-    _DONE_MARKERS = ("отметь", "выполнено", "сделано", "готово", "выполнила",
-                     "сделала", "выполнил", "сделал")
-    _TASK_MARKERS = ("запиши", "добавь", "поставь задачу", "нужно ", "надо ",
-                     "сделать", "купить", "позвонить", "записаться", "заказать",
-                     "написать ", "забрать", "отвезти", "приготовить", "напомни",
-                     "закажи", "запланируй")
+    """Возвращает тип действия: 'edit', 'delete', 'done', 'task' или None."""
     if any(m in lower_text for m in _EDIT_MARKERS):
-        return "Пользователь хочет ИЗМЕНИТЬ существующую задачу. Ответь СТРОГО type='edit'. Найди задачу по search_text и укажи updates."
+        return "edit"
     if any(m in lower_text for m in _DELETE_MARKERS):
-        return "Пользователь хочет УДАЛИТЬ задачу. Ответь СТРОГО type='delete'. Укажи search_text для поиска задачи."
+        return "delete"
     if any(m in lower_text for m in _DONE_MARKERS):
-        return "Пользователь отмечает задачу как выполненную. Ответь СТРОГО type='done' (или 'done_multiple' для нескольких). Укажи search_text."
+        return "done"
     if any(m in lower_text for m in _TASK_MARKERS):
-        return "Пользователь даёт задачу. Ответь СТРОГО type='task'. Извлеки задачу."
+        return "task"
     return None
+
+
+def _extract_search_text(user_text: str) -> str:
+    """Извлекает текст задачи из сообщения, убирая маркеры действий."""
+    import re
+    lower = user_text.lower()
+    all_markers = _ALL_ACTION_MARKERS + _TASK_MARKERS
+    result = lower
+    for marker in sorted(all_markers, key=len, reverse=True):
+        result = result.replace(marker, "")
+    result = re.sub(r"\b(задачу|задача|рутину|рутина|ежедневную|ежедневная|еженедельную)\b", "", result)
+    result = result.strip(" .,!?:;—–-")
+    return result
 
 
 async def _process_user_text(update: Update, user_text: str) -> None:
@@ -594,38 +611,80 @@ async def _process_user_text(update: Update, user_text: str) -> None:
         msg_type = "task"
         ai_result["type"] = "task"
 
+    action_handled = False
     if msg_type == "chat" and not has_tasks:
         lower = user_text.lower()
-        retry_instruction = _detect_action_type(lower)
-        if retry_instruction:
-            logger.warning("AI вернул chat, но обнаружен маркер действия — повторный запрос (%s)", retry_instruction[:40])
+        detected_action = _detect_action_type(lower)
+        if detected_action and detected_action != "task":
+            search = _extract_search_text(user_text)
+            logger.info("AI вернул chat, но обнаружен маркер '%s', search='%s' — прямое действие", detected_action, search[:40])
+            found = db.find_task_by_text(user_row["id"], search) if search else None
+            if detected_action == "delete" and found:
+                ok = db.delete_task(found["id"], user_row["id"])
+                logger.info("Прямое удаление: id=%s ok=%s", found["id"], ok)
+                if ok:
+                    reply_text = f"🗑 *Удалено:* «{found['text']}»\n\n_Готово, задача убрана из списка._"
+                else:
+                    reply_text = f"⚠️ Задача «{found['text']}» уже была удалена или завершена."
+                msg_type = "delete"
+                action_handled = True
+            elif detected_action == "done" and found:
+                db.complete_task(found["id"], user_row["id"])
+                logger.info("Прямое завершение: id=%s", found["id"])
+                reply_text = f"✅ *Отмечено:* «{found['text']}»\n\n_Молодец! Одним делом меньше._"
+                msg_type = "done"
+                action_handled = True
+            elif detected_action == "edit" and found:
+                logger.info("Прямое редактирование невозможно без AI — перезапрос")
+                ai_result2 = ai_module.process_message(
+                    f"[СИСТЕМНАЯ ИНСТРУКЦИЯ: пользователь хочет ИЗМЕНИТЬ задачу. Ответь type='edit'. search_text='{found['text']}'. Укажи updates.]\n{user_text}",
+                    active_tasks, recent,
+                )
+                if ai_result2.get("type") == "edit":
+                    ai_result = ai_result2
+                    msg_type = "edit"
+                    reply_text = ai_result.get("reply_text", "Записано.")
+                else:
+                    reply_text = "✏️ Не удалось обработать изменение. Попробуй позже или удали задачу и создай новую."
+                    msg_type = "edit"
+                    action_handled = True
+            elif not found:
+                if detected_action == "delete":
+                    reply_text = "_Не нашла задачу для удаления. Покажи список_ (/tasks) _и уточни._"
+                elif detected_action == "done":
+                    reply_text = "_Не нашла задачу для отметки. Покажи список_ (/tasks) _и уточни._"
+                elif detected_action == "edit":
+                    reply_text = "_Не нашла задачу для редактирования. Покажи список_ (/tasks) _и уточни._"
+                msg_type = detected_action
+                action_handled = True
+        elif detected_action == "task":
+            logger.warning("AI вернул chat, но обнаружен маркер задачи — повторный запрос")
             ai_result2 = ai_module.process_message(
-                f"[СИСТЕМНАЯ ИНСТРУКЦИЯ: {retry_instruction}]\n{user_text}",
+                f"[СИСТЕМНАЯ ИНСТРУКЦИЯ: пользователь даёт задачу. Ответь СТРОГО type='task'. Извлеки задачу.]\n{user_text}",
                 active_tasks, recent,
             )
             msg_type2 = ai_result2.get("type", "chat")
-            if msg_type2 != "chat":
+            if msg_type2 in ("task", "tasks") or ai_result2.get("task_text"):
                 ai_result = ai_result2
-                msg_type = msg_type2
+                msg_type = ai_result2.get("type", "task")
+                if msg_type == "chat":
+                    msg_type = "task"
+                    ai_result["type"] = "task"
                 has_tasks = "tasks" in ai_result and isinstance(ai_result.get("tasks"), list)
                 reply_text = ai_result.get("reply_text", "Записано.")
-                logger.info("Повторный AI: type=%s", msg_type)
-            elif ai_result2.get("task_text"):
-                ai_result = ai_result2
-                msg_type = "task"
-                ai_result["type"] = "task"
-                has_tasks = False
-                reply_text = ai_result.get("reply_text", "Записано.")
-                logger.info("Повторный AI: принудительно task, task_text='%s'", ai_result.get("task_text", "")[:40])
+                logger.info("Повторный AI: type=%s task_text='%s'", msg_type, ai_result.get("task_text", "")[:40])
             else:
                 logger.info("Повторный AI тоже вернул chat — оставляем как есть")
 
-    logger.info("AI type=%s has_tasks=%s task_count=%s для '%s'",
+    logger.info("AI type=%s has_tasks=%s task_count=%s handled=%s для '%s'",
                 msg_type, has_tasks,
                 len(ai_result.get("tasks", [])) if has_tasks else 0,
+                action_handled,
                 user_text[:60])
 
-    if msg_type == "task":
+    if action_handled:
+        pass
+    elif msg_type == "task":
         due_date = ai_result.get("due_date")
         is_routine = bool(ai_result.get("is_routine", False))
         settings = db.get_settings(user_row["id"])

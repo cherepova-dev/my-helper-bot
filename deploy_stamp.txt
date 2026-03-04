@@ -1,1 +1,1 @@
-20260304-v2.6-edit-delete-fix
+20260304-v2.7-direct-delete-done
