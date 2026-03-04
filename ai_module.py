@@ -22,7 +22,7 @@ AI_BASE_URL = os.environ.get(
 )
 AI_MODEL = os.environ.get(
     "AI_MODEL",
-    "llama-3.3-70b-versatile" if os.environ.get("GROQ_API_KEY") else "deepseek-chat",
+    "llama-3.1-8b-instant" if os.environ.get("GROQ_API_KEY") else "deepseek-chat",
 )
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "whisper-large-v3-turbo")
 
