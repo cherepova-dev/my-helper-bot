@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Бот для Render/Replit: HTTP-сервер в фоновом потоке (Render проверяет PORT),
-бот в главном потоке (python-telegram-bot v21+ требует главный поток).
-При падении бот автоматически перезапускается с новым event loop.
+Точка входа бота: HTTP-сервер в фоне (PORT), бот в главном потоке.
+По умолчанию запускается бот v2 (без LLM, только Whisper для голоса).
+Чтобы вернуться к боту v1 (с LLM): задай BOT_VERSION=1 или BOT_VERSION=v1.
 """
 import os
 import sys
@@ -15,6 +15,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 PORT = int(os.environ.get("PORT", "8080"))
+# BOT_VERSION=1 или v1 — запуск старого бота (bot.py с LLM). Иначе — bot_v2.
+_bot_ver = os.environ.get("BOT_VERSION", "").strip().lower()
+USE_V1 = _bot_ver in ("1", "v1")
 
 logger = logging.getLogger("bot_replit")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -52,17 +55,21 @@ def run_bot():
                 _stamp = _f.read().strip()
     except Exception:
         pass
-    logger.info("DEPLOY_STAMP: %s", _stamp or "none")
+    version = "v1" if USE_V1 else "v2"
+    logger.info("DEPLOY_STAMP: %s (bot %s)", _stamp or "none", version)
 
     for attempt in range(1, max_retries + 1):
         try:
             bot_healthy = True
-            logger.info("Запуск бота (попытка %d/%d)", attempt, max_retries)
+            logger.info("Запуск бота %s (попытка %d/%d)", version, attempt, max_retries)
 
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            import bot as bot_module
+            if USE_V1:
+                import bot as bot_module
+            else:
+                import bot_v2 as bot_module  # по умолчанию v2
             importlib.reload(bot_module)
             bot_module.main()
 
