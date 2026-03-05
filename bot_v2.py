@@ -28,6 +28,7 @@ from task_parsing import (
     parse_due_time,
     extract_task_text,
     starts_with_add_marker,
+    clean_task_text_from_datetime,
 )
 
 # Алиасы для использования в _save_one_task_and_reply
@@ -57,11 +58,10 @@ BOT_COMMANDS = [
 ]
 
 ONBOARDING_V2 = (
-    "Привет! Я помощник по задачам (облегчённая версия).\n\n"
+    "Привет! Я помощник по задачам.\n\n"
     "*Как добавить задачу:*\n"
-    "• Нажми «Добавить задачу» и отправь следующее сообщение с текстом задачи\n"
-    "• Или напиши/скажи: «Добавь [задача]», «Создай [задача]», «Запиши [задача]»\n\n"
-    "Голосовые сообщения распознаются и обрабатываются так же — без лишнего AI.\n\n"
+    "• Нажми «Добавить задачу» и отправь следующим сообщением текст задачи\n"
+    "• Или напиши: «Добавь [задача]», «Создай [задача]», «Запиши [задача]»\n\n"
     "«Список задач» — покажет все активные задачи."
 )
 
@@ -111,21 +111,79 @@ def _build_confirmation(task_text: str, due_date: str | None, date_label: str, d
     return "\n".join(lines)
 
 
+# Названия месяцев для человекочитаемой даты (родительный падеж)
+_MONTH_RU = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
+    7: "июля", 8: "августа", 9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
+
+
+def _format_date_human(date_str: str) -> str:
+    """Преобразует YYYY-MM-DD в «4 марта 2026»."""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return f"{dt.day} {_MONTH_RU[dt.month]} {dt.year}"
+    except (ValueError, KeyError):
+        return date_str
+
+
+def _format_time_human(time_str: str) -> str:
+    """Возвращает время в человекочитаемом виде (HH:MM)."""
+    return (time_str or "").strip()
+
+
 def _format_task_list(tasks: list[dict]) -> str:
-    """Форматирует список активных задач для ответа."""
+    """Форматирует список активных задач: группировка по дате, сортировка по дате и времени, человекочитаемые дата/время."""
     if not tasks:
         return "_Пока нет активных задач. Добавь задачу через меню или напиши «Добавь [задача]»._"
+
+    # Сортировка: сначала с датой (по дате, затем по времени), потом без даты
+    def sort_key(t: dict) -> tuple:
+        d = t.get("due_date") or ""
+        ti = t.get("due_time") or ""
+        return (d, ti)
+
+    sorted_tasks = sorted(tasks, key=sort_key)
+
+    # Группировка по дате
+    by_date: dict[str, list[dict]] = {}
+    for t in sorted_tasks:
+        d = t.get("due_date") or ""
+        if d not in by_date:
+            by_date[d] = []
+        by_date[d].append(t)
+
     lines = [f"📋 *Все задачи ({len(tasks)})*\n"]
-    for t in tasks:
-        emoji = t.get("category_emoji") or "📝"
-        text = t["text"]
-        parts = [f"☐ {emoji} {text}"]
-        if t.get("due_date"):
-            parts.append(f" — {t['due_date']}")
-        if t.get("due_time"):
-            parts.append(f" {t['due_time']}")
-        lines.append("".join(parts))
-    return "\n".join(lines)
+
+    # Сначала задачи с датой (пустая строка = без срока в конце)
+    date_keys = [k for k in by_date if k]
+    date_keys.sort()
+    for date_str in date_keys:
+        group = by_date[date_str]
+        label = _format_date_human(date_str)
+        lines.append(f"*📅 {label}*")
+        for t in group:
+            emoji = t.get("category_emoji") or "📝"
+            text = t["text"]
+            time_part = ""
+            if t.get("due_time"):
+                time_part = f" в {_format_time_human(t['due_time'])}"
+            lines.append(f"☐ {emoji} {text}{time_part}")
+        lines.append("")
+
+    # Задачи без срока
+    if "" in by_date:
+        lines.append("*📅 Без срока*")
+        for t in by_date[""]:
+            emoji = t.get("category_emoji") or "📝"
+            text = t["text"]
+            time_part = ""
+            if t.get("due_time"):
+                time_part = f" в {_format_time_human(t['due_time'])}"
+            lines.append(f"☐ {emoji} {text}{time_part}")
+        lines.append("")
+
+    return "\n".join(lines).strip()
 
 
 async def _reply(update: Update, text: str, max_retries: int = 3) -> None:
@@ -165,6 +223,8 @@ async def _save_one_task_and_reply(
 
     due_date = _parse_due_date(task_text)
     due_time = _parse_due_time(task_text)
+    # Убираем дату и время из названия задачи — они хранятся в полях due_date/due_time
+    task_title = clean_task_text_from_datetime(task_text) or task_text
     date_label = ""
 
     if due_date:
@@ -185,7 +245,7 @@ async def _save_one_task_and_reply(
     try:
         task_row = db.add_task(
             user_id=internal_user_id,
-            text=task_text,
+            text=task_title,
             category_emoji="📝",
             category_name="Другое",
             due_date=due_date,
@@ -196,9 +256,9 @@ async def _save_one_task_and_reply(
             priority_size=5,
         )
         if task_row:
-            msg = _build_confirmation(task_text, due_date, date_label, due_time)
+            msg = _build_confirmation(task_title, due_date, date_label, due_time)
             await _reply(update, msg)
-            logger.info("v2: задача сохранена id=%s text='%s'", task_row.get("id"), task_text[:50])
+            logger.info("v2: задача сохранена id=%s text='%s'", task_row.get("id"), task_title[:50])
         else:
             await _reply(update, "⚠️ Не удалось сохранить задачу. Попробуй ещё раз.")
     except Exception as e:

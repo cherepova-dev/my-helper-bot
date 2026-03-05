@@ -60,12 +60,15 @@ def parse_due_date(text: str, today: datetime | None = None) -> str | None:
 
 
 def parse_due_time(text: str) -> str | None:
-    """Извлекает время из текста. Возвращает HH:MM или None."""
+    """Извлекает время из текста. Возвращает HH:MM или None.
+    Поддерживает: «в 12:00», «к 12:00», «к 12 завтра», «в 10 утра», «к 10 утра», «12:00».
+    """
     lower = text.lower()
-    m = re.search(r"в\s+(\d{1,2})[\s:.](\d{2})", lower)
+    # «в 12:00» или «к 12:00», «в 10.30», «к 10,00» (запятая как разделитель)
+    m = re.search(r"[вк]\s+(\d{1,2})[\s:.,](\d{2})", lower)
     if m:
         return f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
-    m = re.search(r"в\s+(\d{1,2})\s+(?:утра|часов|часа|час|дня|вечера|ночи)", lower)
+    m = re.search(r"[вк]\s+(\d{1,2})\s+(?:утра|часов|часа|час|дня|вечера|ночи)", lower)
     if m:
         hour = int(m.group(1))
         if "вечера" in lower and hour < 12:
@@ -73,6 +76,12 @@ def parse_due_time(text: str) -> str | None:
         if "ночи" in lower and hour < 12:
             hour += 12 if hour != 12 else 0
         return f"{hour:02d}:00"
+    # «к 12 завтра», «в 14 сегодня» — только час, минуты 00
+    m = re.search(r"[вк]\s+(\d{1,2})\s+(?:завтра|сегодня|послезавтра)\b", lower)
+    if m:
+        hour = int(m.group(1))
+        if 0 <= hour <= 23:
+            return f"{hour:02d}:00"
     m = re.search(r"(\d{1,2}):(\d{2})", lower)
     if m:
         return f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
@@ -95,3 +104,49 @@ def starts_with_add_marker(text: str) -> bool:
     """True, если текст начинается с одного из маркеров добавления задачи."""
     lower = text.strip().lower()
     return any(lower.startswith(p) for p in ADD_PREFIXES_LOWER)
+
+
+def clean_task_text_from_datetime(text: str) -> str:
+    """
+    Убирает из текста задачи фразы с датой и временем, чтобы в названии
+    осталось только суть (дата и время сохраняются в отдельных полях).
+    """
+    if not text or not text.strip():
+        return text
+    s = text.strip()
+    lower = s.lower()
+
+    # Время: "в 12:00", "к 12:00", "в 10.30", "к 10,00"
+    s = re.sub(r"\s*[вк]\s+\d{1,2}[\s:.,]\d{2}\s*", " ", s, flags=re.IGNORECASE)
+    # Время без минут: "к 12 завтра", "в 14 сегодня"
+    s = re.sub(r"\s*[вк]\s+\d{1,2}\s+(?=завтра|сегодня|послезавтра)", " ", s, flags=re.IGNORECASE)
+    # Время: "в 10 утра", "к 10 утра", "в 7 вечера"
+    s = re.sub(
+        r"\s*[вк]\s+\d{1,2}\s+(?:утра|часов|часа|час|дня|вечера|ночи)\s*",
+        " ",
+        s,
+        flags=re.IGNORECASE,
+    )
+    # Отдельно время без "в": "12:00" в конце или с запятой
+    s = re.sub(r",?\s*\d{1,2}:\d{2}\s*$", "", s)
+    s = re.sub(r"^[\s,]*\d{1,2}:\d{2}\s*", "", s)
+
+    # Относительные даты
+    for phrase in ("послезавтра", "завтра", "сегодня"):
+        s = re.sub(rf"\s*{re.escape(phrase)}\s*", " ", s, flags=re.IGNORECASE)
+    # "через N дней/дня/дней"
+    s = re.sub(r"\s*через\s+\d+\s+(?:день|дня|дней)\s*", " ", s, flags=re.IGNORECASE)
+    # Дни недели: "в пятницу", "в среду", "в понедельник"
+    weekdays = (
+        "понедельник", "вторник", "среду", "среда", "четверг",
+        "пятницу", "пятница", "субботу", "суббота", "воскресенье",
+    )
+    for w in weekdays:
+        s = re.sub(rf"\s*в\s+{re.escape(w)}\s*", " ", s, flags=re.IGNORECASE)
+        s = re.sub(rf"\s+{re.escape(w)}\s*$", "", s, flags=re.IGNORECASE)
+        s = re.sub(rf"^\s*{re.escape(w)}\s+", "", s, flags=re.IGNORECASE)
+    # Дата ДД.ММ или ДД/ММ
+    s = re.sub(r"\s*\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\s*", " ", s)
+
+    s = re.sub(r"\s+", " ", s).strip().strip(".,;:")
+    return s if s else text.strip()

@@ -100,6 +100,20 @@ class TestFormatTaskList:
         assert "купить молоко" in result
         assert "1" in result or "задач" in result.lower()
 
+    def test_human_date_and_grouping(self):
+        """Список: человекочитаемая дата (например «3 марта 2026»), группировка по дате, сортировка по дате и времени."""
+        tasks = [
+            {"text": "позвонить", "category_emoji": "📝", "due_date": "2026-03-05", "due_time": "10:00"},
+            {"text": "встреча", "category_emoji": "📝", "due_date": "2026-03-05", "due_time": "14:00"},
+            {"text": "без срока", "category_emoji": "📝", "due_date": None, "due_time": None},
+        ]
+        result = _format_task_list(tasks)
+        assert "марта" in result or "март" in result
+        assert "2026" in result
+        assert "позвонить" in result and "встреча" in result
+        assert result.index("позвонить") < result.index("встреча")
+        assert "Без срока" in result or "без срока" in result.lower()
+
 
 class TestBuildConfirmation:
     """Текст подтверждения задачи (_build_confirmation)."""

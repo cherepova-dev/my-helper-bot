@@ -17,6 +17,7 @@ from task_parsing import (
     parse_due_time,
     extract_task_text,
     starts_with_add_marker,
+    clean_task_text_from_datetime,
 )
 
 
@@ -81,6 +82,26 @@ class TestParseDueTime:
         assert parse_due_date("в 9.30 прийти", today=MONDAY) is None  # не дата
         assert parse_due_time("в 9.30 прийти") == "09:30"
 
+    def test_time_in_middle_or_end(self):
+        """Время распознаётся в любом месте фразы (например «на мойку в 12:00 завтра»)."""
+        assert parse_due_time("отогнать машину на мойку в 12:00 завтра") == "12:00"
+        assert parse_due_time("в 12:00 завтра") == "12:00"
+
+    def test_time_k_format(self):
+        """Формат «к 12:00» (на мойку к 12:00 завтра)."""
+        assert parse_due_time("на мойку к 12:00 завтра") == "12:00"
+        assert parse_due_time("к 10:30 приехать") == "10:30"
+        assert parse_due_time("к 9 утра") == "09:00"
+
+    def test_time_k_without_minutes(self):
+        """«к 12 завтра» без минут — трактуется как 12:00."""
+        assert parse_due_time("на мойку к 12 завтра") == "12:00"
+        assert parse_due_time("в 14 сегодня") == "14:00"
+
+    def test_time_comma_separator(self):
+        """Время с запятой: «к 12,00»."""
+        assert parse_due_time("к 12,00 завтра") == "12:00"
+
     def test_no_time_returns_none(self):
         assert parse_due_time("задача без времени") is None
         assert parse_due_time("просто текст") is None
@@ -126,3 +147,36 @@ class TestStartsWithAddMarker:
         assert starts_with_add_marker("удали задачу") is False
         assert starts_with_add_marker("что на сегодня?") is False
         assert starts_with_add_marker("") is False
+
+
+class TestCleanTaskTextFromDatetime:
+    """Удаление даты и времени из названия задачи."""
+
+    def test_removes_time_and_tomorrow(self):
+        assert (
+            clean_task_text_from_datetime("Отогнать машину на мойку в 12:00 завтра")
+            == "Отогнать машину на мойку"
+        )
+
+    def test_removes_k_time(self):
+        """Убирает «к 12:00» и «к 12 завтра» из названия задачи."""
+        assert (
+            clean_task_text_from_datetime("На мойку к 12:00 завтра")
+            == "На мойку"
+        )
+        assert (
+            clean_task_text_from_datetime("На мойку к 12 завтра")
+            == "На мойку"
+        )
+
+    def test_removes_today(self):
+        assert clean_task_text_from_datetime("Купить молоко сегодня") == "Купить молоко"
+
+    def test_removes_weekday(self):
+        assert (
+            clean_task_text_from_datetime("Встреча в пятницу в 10:00")
+            == "Встреча"
+        )
+
+    def test_plain_text_unchanged(self):
+        assert clean_task_text_from_datetime("Позвонить маме") == "Позвонить маме"
