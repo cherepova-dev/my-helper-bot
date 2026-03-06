@@ -445,19 +445,30 @@ def transfer_overdue_tasks(user_id: int) -> int:
     return n or 0
 
 
+def _normalize_search(s: str) -> str:
+    """Нормализация для поиска: нижний регистр, схлопывание пробелов (голос может дать лишние)."""
+    if not s:
+        return ""
+    import re
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
 def find_tasks_matching_text(user_id: int, search: str) -> list[dict]:
     """Все активные задачи, в тексте которых встречается search (подстрока или все слова)."""
-    search_lower = search.lower().strip()
-    if not search_lower:
+    search_norm = _normalize_search(search)
+    if not search_norm:
         return []
     tasks = get_active_tasks_ordered(user_id)
     out = []
     for t in tasks:
-        if search_lower in (t.get("text") or "").lower():
+        task_text = _normalize_search(t.get("text") or "")
+        if not task_text:
+            continue
+        if search_norm in task_text:
             out.append(t)
             continue
-        words = search_lower.split()
-        if words and all(w in (t.get("text") or "").lower() for w in words):
+        words = [w for w in search_norm.split() if w]
+        if words and all(w in task_text for w in words):
             out.append(t)
     return out
 

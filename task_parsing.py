@@ -132,6 +132,9 @@ def extract_done_target(text: str) -> tuple[int | None, str]:
         if lower.startswith(prefix):
             rest = t[len(prefix):].strip()
             rest = re.sub(r"^(?:задач[уа]\.?\s*)?", "", rest, flags=re.IGNORECASE).strip()
+            # Голос может дать «отметь задачу. Отогнать машину» — убираем ведущие точки/запятые
+            rest = re.sub(r"^[.,;:\s]+", "", rest).strip()
+            rest = re.sub(r"\s+", " ", rest).strip()
             break
     if not rest:
         return None, ""

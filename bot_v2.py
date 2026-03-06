@@ -342,14 +342,27 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, text)
 
 
-def _format_today_list(ordered_today: list[tuple[int, dict]]) -> str:
+def _format_today_list(ordered_today: list[tuple[int, dict]], title: str = "📅 *План на сегодня*") -> str:
     """Список задач на сегодня: список пар (номер в общем списке, задача)."""
-    lines = ["📅 *План на сегодня*\n"]
+    lines = [f"{title}\n"]
     for num, t in ordered_today:
         emoji = t.get("category_emoji") or "📝"
         time_part = f" в {_format_time_human(t['due_time'])}" if t.get("due_time") else ""
         lines.append(f"{num}. ☐ {emoji} {t['text']}{time_part}")
     return "\n".join(lines)
+
+
+async def _send_remaining_today(update: Update, user_id: int) -> None:
+    """После выполнения задачи — отправить список «ОСТАЛОСЬ СЕГОДНЯ СДЕЛАТЬ» (как план на сегодня)."""
+    ordered = _active_tasks_display_order(user_id)
+    today_tasks = db.get_today_tasks(user_id)
+    today_ids = {t["id"] for t in today_tasks}
+    ordered_today = [(i, t) for i, t in enumerate(ordered, start=1) if t["id"] in today_ids]
+    if ordered_today:
+        text = _format_today_list(ordered_today, title="🔥 *ОСТАЛОСЬ СЕГОДНЯ СДЕЛАТЬ*")
+    else:
+        text = "🔥 *ОСТАЛОСЬ СЕГОДНЯ СДЕЛАТЬ*\n\n_Всё сделано на сегодня._"
+    await _reply(update, text)
 
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -404,7 +417,8 @@ async def _handle_complete(
         if 1 <= num <= len(ordered):
             task = ordered[num - 1]
             if db.complete_task(task["id"], uid):
-                await _reply(update, f"✅ Выполнено: «{task['text']}»")
+                await _reply(update, f"🔥 Выполнено: «{task['text']}»")
+                await _send_remaining_today(update, uid)
             else:
                 await _reply(update, "Не удалось отметить задачу.")
         else:
@@ -438,7 +452,8 @@ async def _handle_complete(
     if len(matches) == 1:
         task = matches[0]
         if db.complete_task(task["id"], uid):
-            await _reply(update, f"✅ Выполнено: «{task['text']}»")
+            await _reply(update, f"🔥 Выполнено: «{task['text']}»")
+            await _send_remaining_today(update, uid)
         else:
             await _reply(update, "Не удалось отметить задачу.")
         return
