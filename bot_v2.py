@@ -23,6 +23,7 @@ from telegram.ext import (
 
 import db
 import ai_module
+from categories import assign_category
 from task_parsing import (
     parse_due_date,
     parse_due_time,
@@ -110,7 +111,14 @@ def _auto_schedule_date(user_id: int) -> tuple[str, str]:
     return date_str, "завтра"
 
 
-def _build_confirmation(task_text: str, due_date: str | None, date_label: str, due_time: str | None) -> str:
+def _build_confirmation(
+    task_text: str,
+    due_date: str | None,
+    date_label: str,
+    due_time: str | None,
+    category_emoji: str = "📝",
+    category_name: str = "Другое",
+) -> str:
     """Текст подтверждения одной задачи."""
     if due_date and date_label:
         date_display = f"{date_label} ({due_date})"
@@ -124,7 +132,7 @@ def _build_confirmation(task_text: str, due_date: str | None, date_label: str, d
         "✅ *Задача принята*",
         "",
         f"📝 «{task_text}»",
-        f"📂 Категория: 📝 Другое",
+        f"📂 Категория: {category_emoji} {category_name}",
         f"📅 Срок: {date_display}",
         "🔥 Приоритет: 5/10",
         "",
@@ -250,6 +258,10 @@ async def _save_one_task_and_reply(
         task_title = task_title.upper()
     date_label = ""
 
+    # Определение категории по тексту задачи (до upper — по оригиналу для лучшего матчинга)
+    _raw_for_cat = (clean_task_text_from_datetime(task_text) or task_text).strip()
+    category_emoji, category_name = assign_category(_raw_for_cat)
+
     if due_date:
         lower = task_text.lower()
         if "сегодня" in lower:
@@ -269,8 +281,8 @@ async def _save_one_task_and_reply(
         task_row = db.add_task(
             user_id=internal_user_id,
             text=task_title,
-            category_emoji="📝",
-            category_name="Другое",
+            category_emoji=category_emoji,
+            category_name=category_name,
             due_date=due_date,
             due_time=due_time,
             priority_value=5,
@@ -279,7 +291,11 @@ async def _save_one_task_and_reply(
             priority_size=5,
         )
         if task_row:
-            msg = _build_confirmation(task_title, due_date, date_label, due_time)
+            msg = _build_confirmation(
+                task_title, due_date, date_label, due_time,
+                category_emoji=category_emoji,
+                category_name=category_name,
+            )
             await _reply(update, msg)
             logger.info("v2: задача сохранена id=%s text='%s'", task_row.get("id"), task_title[:50])
         else:
@@ -381,8 +397,9 @@ def _format_done_report(tasks: list[dict], title: str) -> str:
         return f"{title}\n\n_Нет выполненных задач._"
     lines = [f"✅ *{title}*\n"]
     for t in tasks:
+        emoji = t.get("category_emoji") or "📝"
         text = (t.get("text") or "").strip()
-        lines.append(f"• {text}")
+        lines.append(f"• {emoji} {text}")
     return "\n".join(lines)
 
 

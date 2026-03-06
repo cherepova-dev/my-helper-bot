@@ -128,6 +128,15 @@ class TestBuildConfirmation:
         assert "купить молоко" in result
         assert "Задача принята" in result
 
+    def test_contains_category(self):
+        result = _build_confirmation(
+            "уборка", "2026-03-03", "сегодня", None,
+            category_emoji="🏠",
+            category_name="Быт / дом",
+        )
+        assert "Быт / дом" in result
+        assert "🏠" in result
+
 
 class TestFormatTodayList:
     """Список на сегодня с нумерацией (_format_today_list). Принимает список пар (номер, задача)."""
@@ -158,3 +167,9 @@ class TestFormatDoneReport:
         tasks = [{"text": "Купить молоко"}, {"text": "Позвонить"}]
         result = _format_done_report(tasks, "Сделано за неделю")
         assert "Купить молоко" in result and "Позвонить" in result
+
+    def test_with_category_emoji(self):
+        tasks = [{"text": "Помыть посуду", "category_emoji": "🏠"}]
+        result = _format_done_report(tasks, "Сделано сегодня")
+        assert "🏠" in result
+        assert "Помыть посуду" in result
