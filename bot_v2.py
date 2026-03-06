@@ -52,6 +52,8 @@ logger = logging.getLogger(__name__)
 
 # Состояние: после /add следующее сообщение = текст задачи. Ключ = telegram user id.
 _awaiting_task: dict[int, bool] = {}
+# После /done следующее сообщение = номер или название задачи для выполнения.
+_awaiting_done: dict[int, bool] = {}
 
 BOT_COMMANDS = [
     ("start", "Начать"),
@@ -293,12 +295,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     db.get_or_create_user(user.id, user.first_name or "")
     _awaiting_task.pop(user.id, None)
+    _awaiting_done.pop(user.id, None)
     await _reply(update, ONBOARDING_V2)
 
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     db.get_or_create_user(user.id, user.first_name or "")
+    _awaiting_done.pop(user.id, None)
     _awaiting_task[user.id] = True
     await _reply(
         update,
@@ -349,10 +353,13 @@ def _format_today_list(ordered_today: list[tuple[int, dict]]) -> str:
 
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    _awaiting_task.pop(user.id, None)
+    _awaiting_done[user.id] = True
     await _reply(
         update,
-        "Напиши *номер* задачи из списка (например: _3_) или часть названия.\n"
-        "Примеры: «Отметь 3», «Выполни купить молоко».",
+        "Напиши *номер* задачи из списка (например: _1_ или _3_) или часть названия.\n"
+        "Следующее сообщение я восприму как указание, какую задачу отметить выполненной.",
     )
 
 
@@ -407,9 +414,26 @@ async def _handle_complete(
     if not rest:
         await _reply(update, "Напиши номер задачи или часть названия. Например: «Отметь 3» или «Выполни купить молоко».")
         return
-    matches = db.find_tasks_matching_text(uid, rest)
+    # Голос может дать «зарегистрировать домен или отогнать машину» — пробуем по частям до первого однозначного
+    search_phrases = [s.strip() for s in rest.split(" или ") if s.strip()]
+    if not search_phrases:
+        search_phrases = [rest]
+    matches = None
+    used_query = rest
+    for phrase in search_phrases:
+        m = db.find_tasks_matching_text(uid, phrase)
+        if len(m) == 1:
+            matches = m
+            used_query = phrase
+            break
+        if len(m) > 1:
+            matches = m
+            used_query = phrase
+    if matches is None and len(search_phrases) > 1:
+        matches = db.find_tasks_matching_text(uid, rest)
+        used_query = rest
     if not matches:
-        await _reply(update, f"Задача по запросу «{rest}» не найдена.")
+        await _reply(update, f"Задача по запросу «{used_query}» не найдена.")
         return
     if len(matches) == 1:
         task = matches[0]
@@ -447,6 +471,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not text:
         await _reply(update, "Напиши текст задачи или используй «Добавь [задача]».")
+        return
+
+    # Режим «ожидаю номер/название для выполнения» после /done
+    if _awaiting_done.pop(user.id, False):
+        msg = text.strip()
+        if msg.isdigit():
+            await _handle_complete(update, user_row, f"отметь {msg}")
+        else:
+            await _handle_complete(update, user_row, f"выполни {msg}")
         return
 
     # Режим «ожидаю задачу» после /add
@@ -524,6 +557,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     text = text.strip()
     await update.message.reply_text(f"🎤 Распознано: «{text[:200]}{'…' if len(text) > 200 else ''}»")
+
+    if _awaiting_done.pop(user.id, False):
+        if text.isdigit():
+            await _handle_complete(update, user_row, f"отметь {text}")
+        else:
+            await _handle_complete(update, user_row, f"выполни {text}")
+        return
 
     if _awaiting_task.pop(user.id, False):
         await _save_one_task_and_reply(update, user_row, text)
