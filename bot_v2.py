@@ -8,7 +8,12 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 from telegram import BotCommand, Update
 from telegram.constants import ParseMode
@@ -77,6 +82,14 @@ SYN_TODAY = (
 )
 SYN_ADD_TASK = (
     "добавить задачу", "новая задача", "добавить новую задачу", "создать задачу",
+)
+SYN_DONE_TODAY = (
+    "что сделала сегодня", "что сделал сегодня", "мои достижения сегодня",
+    "сделано сегодня", "выполнено сегодня", "отчёт за день",
+)
+SYN_DONE_WEEK = (
+    "отчёт за неделю", "сделано за неделю", "выполнено за неделю",
+    "что сделала за неделю", "что сделал за неделю", "мои достижения за неделю",
 )
 # Маркеры выполнения — в task_parsing (отметь, выполни и т.д.)
 
@@ -255,7 +268,7 @@ async def _save_one_task_and_reply(
     # Убираем дату и время из названия задачи — они хранятся в полях due_date/due_time
     task_title = (clean_task_text_from_datetime(task_text) or task_text).strip()
     if task_title:
-        task_title = task_title.upper()
+        task_title = task_title.capitalize()
     date_label = ""
 
     # Определение категории по тексту задачи (до upper — по оригиналу для лучшего матчинга)
@@ -392,7 +405,147 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+# Порядок категорий для отображения в отчётах (эмодзи, название)
+_REPORT_CATEGORY_ORDER = [
+    ("🏠", "Быт / дом"),
+    ("👨‍👩‍👧", "Семья"),
+    ("💇‍♀️", "Уход / внешность"),
+    ("🌿", "Для себя"),
+    ("🎫", "Досуг"),
+    ("📦", "Дела / поручения"),
+    ("🧠", "Большие проекты"),
+    ("📝", "Другое"),
+]
+
+
+def _parse_completed_at(completed_at_str, tz_name: str = "Europe/Moscow"):
+    """Парсит completed_at (ISO) и возвращает datetime в TZ пользователя."""
+    if not completed_at_str:
+        return None
+    try:
+        if isinstance(completed_at_str, str) and "T" in completed_at_str:
+            dt = datetime.fromisoformat(completed_at_str.replace("Z", "+00:00"))
+        else:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if ZoneInfo:
+            tz = ZoneInfo(tz_name)
+            return dt.astimezone(tz)
+        return dt
+    except Exception:
+        return None
+
+
+def _format_completed_time(dt) -> str:
+    """Форматирует время: «в 10:30»."""
+    if not dt:
+        return ""
+    return f" в {dt.strftime('%H:%M')}"
+
+
+def _format_completed_datetime(dt) -> str:
+    """Форматирует дату и время: «24 февраля в 14:00»."""
+    if not dt:
+        return ""
+    return f"{dt.day} {_MONTH_RU[dt.month]} в {dt.strftime('%H:%M')}"
+
+
+def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
+    """Отчёт за день: сводка, группировка по категориям, время выполнения, дружелюбный пустой."""
+    if not tasks:
+        return (
+            "🔥 *Сделано сегодня*\n\n"
+            "_Сегодня пока ни одной задачи не отмечено. "
+            "План на сегодня ещё можно выполнить!_"
+        )
+    lines = ["🔥 *Сделано сегодня*", ""]
+    n = len(tasks)
+    cats = {}
+    for t in tasks:
+        emoji = t.get("category_emoji") or "📝"
+        name = t.get("category_name") or "Другое"
+        key = (emoji, name)
+        if key not in cats:
+            cats[key] = []
+        cats[key].append(t)
+    n_cats = len(cats)
+    lines.append(f"Выполнено: *{n}* задач · *{n_cats}* категорий")
+    lines.append("")
+    for emoji, name in _REPORT_CATEGORY_ORDER:
+        group = cats.get((emoji, name), [])
+        if not group:
+            continue
+        lines.append(f"*{emoji} {name}*")
+        for t in group:
+            text = (t.get("text") or "").strip()
+            dt = _parse_completed_at(t.get("completed_at"), tz_name)
+            time_str = _format_completed_time(dt) if dt else ""
+            lines.append(f"  • {text}{time_str}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _format_done_report_week(tasks: list[dict], tz_name: str) -> str:
+    """Отчёт за неделю: сводка, группировка по дням и категориям, статистика по категориям."""
+    if not tasks:
+        return (
+            "🔥 *Сделано за неделю*\n\n"
+            "_За последние 7 дней не отмечено ни одной задачи. "
+            "Добавляй дела и отмечай выполненные — прогресс накапливается!_"
+        )
+    lines = ["🔥 *Сделано за неделю*", ""]
+    n = len(tasks)
+    lines.append(f"За 7 дней: *{n}* задач")
+    cat_counts = {}
+    by_day: dict[str, list[dict]] = {}
+    for t in tasks:
+        dt = _parse_completed_at(t.get("completed_at"), tz_name)
+        day_key = dt.strftime("%Y-%m-%d") if dt else "_no_date_"
+        if day_key not in by_day:
+            by_day[day_key] = []
+        by_day[day_key].append(t)
+        emoji = t.get("category_emoji") or "📝"
+        name = t.get("category_name") or "Другое"
+        key = (emoji, name)
+        cat_counts[key] = cat_counts.get(key, 0) + 1
+    cat_line_parts = [
+        f"{e} {n}: {c}" for (e, n), c in sorted(cat_counts.items(), key=lambda x: -x[1])
+    ]
+    if cat_line_parts:
+        lines.append("По категориям: " + " · ".join(cat_line_parts))
+    lines.append("")
+    day_keys = sorted([k for k in by_day.keys() if k != "_no_date_"], reverse=True)
+    if "_no_date_" in by_day:
+        day_keys.append("_no_date_")
+    for day_key in day_keys:
+        group = by_day[day_key]
+        dt_first = _parse_completed_at(group[0].get("completed_at"), tz_name) if group else None
+        day_label = _format_date_human(day_key) if day_key and day_key != "_no_date_" else "Без даты"
+        wd_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        wd = wd_names[dt_first.weekday()] if dt_first else ""
+        lines.append(f"*📅 {day_label}* ({wd})")
+        by_cat = {}
+        for t in group:
+            emoji = t.get("category_emoji") or "📝"
+            name = t.get("category_name") or "Другое"
+            key = (emoji, name)
+            if key not in by_cat:
+                by_cat[key] = []
+            by_cat[key].append(t)
+        for emoji, name in _REPORT_CATEGORY_ORDER:
+            sub = by_cat.get((emoji, name), [])
+            for t in sub:
+                text = (t.get("text") or "").strip()
+                dt = _parse_completed_at(t.get("completed_at"), tz_name)
+                time_str = _format_completed_time(dt) if dt else ""
+                lines.append(f"  • {emoji} {text}{time_str}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def _format_done_report(tasks: list[dict], title: str) -> str:
+    """Простой формат (для обратной совместимости тестов)."""
     if not tasks:
         return f"{title}\n\n_Нет выполненных задач._"
     lines = [f"✅ *{title}*\n"]
@@ -407,7 +560,8 @@ async def cmd_done_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     user_row = db.get_or_create_user(user.id, user.first_name or "")
     tasks = db.get_done_tasks_today(user_row["id"])
-    text = _format_done_report(tasks, "Сделано сегодня")
+    tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+    text = _format_done_report_today(tasks, tz_name)
     await _reply(update, text)
 
 
@@ -415,7 +569,8 @@ async def cmd_done_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
     user_row = db.get_or_create_user(user.id, user.first_name or "")
     tasks = db.get_done_tasks(user_row["id"], days=7)
-    text = _format_done_report(tasks, "Сделано за неделю")
+    tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+    text = _format_done_report_week(tasks, tz_name)
     await _reply(update, text)
 
 
@@ -539,6 +694,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _reply(update, msg)
         return
 
+    # Синонимы: сделано сегодня
+    if _match_synonym(text, SYN_DONE_TODAY):
+        uid = user_row["id"]
+        tasks = db.get_done_tasks_today(uid)
+        tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+        await _reply(update, _format_done_report_today(tasks, tz_name))
+        return
+
+    # Синонимы: сделано за неделю
+    if _match_synonym(text, SYN_DONE_WEEK):
+        uid = user_row["id"]
+        tasks = db.get_done_tasks(uid, days=7)
+        tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+        await _reply(update, _format_done_report_week(tasks, tz_name))
+        return
+
     # Синонимы: добавить задачу (без текста задачи) — включить режим «следующее сообщение = задача»
     if _match_synonym(text, SYN_ADD_TASK):
         _awaiting_task[user.id] = True
@@ -617,6 +788,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ordered_today = [(i, t) for i, t in enumerate(ordered, start=1) if t["id"] in today_ids]
         msg = _format_today_list(ordered_today) if ordered_today else "_На сегодня задач нет._"
         await _reply(update, msg)
+        return
+
+    if _match_synonym(text, SYN_DONE_TODAY):
+        uid = user_row["id"]
+        tasks = db.get_done_tasks_today(uid)
+        tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+        await _reply(update, _format_done_report_today(tasks, tz_name))
+        return
+
+    if _match_synonym(text, SYN_DONE_WEEK):
+        uid = user_row["id"]
+        tasks = db.get_done_tasks(uid, days=7)
+        tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+        await _reply(update, _format_done_report_week(tasks, tz_name))
         return
 
     if _match_synonym(text, SYN_ADD_TASK):

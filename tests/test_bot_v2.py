@@ -22,6 +22,8 @@ from bot_v2 import (
     _build_confirmation,
     _format_today_list,
     _format_done_report,
+    _format_done_report_today,
+    _format_done_report_week,
 )
 
 
@@ -173,3 +175,31 @@ class TestFormatDoneReport:
         result = _format_done_report(tasks, "Сделано сегодня")
         assert "🏠" in result
         assert "Помыть посуду" in result
+
+
+class TestFormatDoneReportToday:
+    """Отчёт за день с группировкой по категориям."""
+
+    def test_empty_friendly(self):
+        result = _format_done_report_today([], "Europe/Moscow")
+        assert "Сделано сегодня" in result
+        assert "ни одной задачи" in result or "план" in result.lower()
+
+    def test_with_tasks_grouped(self):
+        tasks = [
+            {"text": "Купить молоко", "category_emoji": "🏠", "category_name": "Быт / дом"},
+            {"text": "Помыть посуду", "category_emoji": "🏠", "category_name": "Быт / дом"},
+        ]
+        result = _format_done_report_today(tasks, "Europe/Moscow")
+        assert "2" in result
+        assert "Быт" in result or "быт" in result.lower()
+        assert "Купить молоко" in result and "Помыть посуду" in result
+
+
+class TestFormatDoneReportWeek:
+    """Отчёт за неделю с группировкой по дням."""
+
+    def test_empty_friendly(self):
+        result = _format_done_report_week([], "Europe/Moscow")
+        assert "Сделано за неделю" in result
+        assert "7 дней" in result or "ни одной" in result
