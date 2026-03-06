@@ -215,3 +215,18 @@ class TestExtractDoneTarget:
     def test_empty_after_marker(self):
         assert extract_done_target("отметь") == (None, "")
         assert extract_done_target("выполни") == (None, "")
+
+    def test_filler_phrases_stripped(self):
+        """«отметь выполненную задачу X» → X, «отметь выполненной X» → X."""
+        assert extract_done_target("отметь выполненную задачу отогнать машину") == (
+            None,
+            "отогнать машину",
+        )
+        assert extract_done_target("отметь выполненной отогнать машину") == (
+            None,
+            "отогнать машину",
+        )
+        assert extract_done_target("выполни выполненную задачу купить молоко") == (
+            None,
+            "купить молоко",
+        )

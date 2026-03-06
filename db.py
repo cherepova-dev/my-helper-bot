@@ -454,23 +454,57 @@ def _normalize_search(s: str) -> str:
 
 
 def find_tasks_matching_text(user_id: int, search: str) -> list[dict]:
-    """Все активные задачи, в тексте которых встречается search (подстрока или все слова)."""
+    """
+    Все активные задачи, в тексте которых встречается search.
+    Поддерживает: подстроку, все слова, частичное вхождение (любое слово из запроса),
+    fallback по последним 2–4 словам (если запрос длинный и нет точного совпадения).
+    """
     search_norm = _normalize_search(search)
     if not search_norm:
         return []
     tasks = get_active_tasks_ordered(user_id)
-    out = []
-    for t in tasks:
-        task_text = _normalize_search(t.get("text") or "")
-        if not task_text:
-            continue
-        if search_norm in task_text:
-            out.append(t)
-            continue
-        words = [w for w in search_norm.split() if w]
-        if words and all(w in task_text for w in words):
-            out.append(t)
-    return out
+    words = [w for w in search_norm.split() if w]
+
+    def _match(query: str, qwords: list[str]) -> list[dict]:
+        out = []
+        for t in tasks:
+            task_text = _normalize_search(t.get("text") or "")
+            if not task_text:
+                continue
+            if query in task_text:
+                out.append(t)
+                continue
+            if qwords and all(w in task_text for w in qwords):
+                out.append(t)
+        return out
+
+    # 1. Точное совпадение (подстрока или все слова)
+    out = _match(search_norm, words)
+    if out:
+        return out
+
+    # 2. Частичное: хотя бы 2 слова из запроса входят в задачу (для длинных фраз)
+    if len(words) >= 3:
+        matches = []
+        for t in tasks:
+            task_text = _normalize_search(t.get("text") or "")
+            if not task_text:
+                continue
+            hits = sum(1 for w in words if w in task_text)
+            if hits >= 2:
+                matches.append(t)
+        if matches:
+            return matches
+
+    # 3. Fallback: последние 2–4 слова (часто это суть задачи)
+    if len(words) >= 4:
+        for n in (4, 3, 2):
+            tail = " ".join(words[-n:])
+            out = _match(tail, words[-n:])
+            if out:
+                return out
+
+    return []
 
 
 def _get_today_in_user_tz(user_id: int) -> tuple[str, int]:

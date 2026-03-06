@@ -21,6 +21,17 @@ DONE_PREFIXES = (
 )
 DONE_PREFIXES_LOWER = [p.lower() for p in sorted(DONE_PREFIXES, key=len, reverse=True)]
 
+# Фразы-«мусор» между действием и названием задачи (убираем с начала остатка).
+# Длинные — первыми, чтобы «выполненную задачу» убрать до «выполненную».
+DONE_FILLER_PHRASES = (
+    "как выполненную задачу", "как выполненной задачу",
+    "выполненную задачу", "выполненной задачу",
+    "как выполненную", "как выполненной",
+    "выполненную", "выполненной",
+    "задачу номер", "задачу #", "номер",
+)
+DONE_FILLER_LOWER = [p.lower() for p in sorted(DONE_FILLER_PHRASES, key=len, reverse=True)]
+
 
 def parse_due_date(text: str, today: datetime | None = None) -> str | None:
     """
@@ -124,6 +135,7 @@ def extract_done_target(text: str) -> tuple[int | None, str]:
     """
     После маркера «отметь/выполни» извлекает номер задачи (1-based) или текст для поиска.
     Возвращает (number, rest_text): если после маркера число — (N, ""), иначе (None, rest).
+    Убирает filler-фразы: «выполненную задачу», «выполненной», «задачу номер» и т.п.
     """
     t = text.strip()
     lower = t.lower()
@@ -138,11 +150,26 @@ def extract_done_target(text: str) -> tuple[int | None, str]:
             break
     if not rest:
         return None, ""
+    # Убираем filler-фразы с начала (отметь выполненную задачу X → X)
+    while True:
+        rest = re.sub(r"^[.,;:\s]+", "", rest).strip()
+        rest = re.sub(r"\s+", " ", rest).strip()
+        if not rest:
+            return None, ""
+        rest_lower = rest.lower()
+        stripped = False
+        for filler in DONE_FILLER_LOWER:
+            if rest_lower.startswith(filler):
+                rest = rest[len(filler):].strip()
+                stripped = True
+                break
+        if not stripped:
+            break
     # Один номер?
     m = re.match(r"^(\d+)\s*$", rest)
     if m:
         return int(m.group(1)), ""
-    # Несколько слов — первое число как номер? "3" или "задачу 3" уже убрано. Остаток "купить молоко" или "3"
+    # Несколько слов — первое число как номер?
     m = re.match(r"^(\d+)\s*[,.]?\s*", rest)
     if m:
         return int(m.group(1)), rest[m.end():].strip() or ""
