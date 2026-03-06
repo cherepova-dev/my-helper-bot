@@ -9,6 +9,11 @@ import os
 import logging
 from datetime import datetime, timezone, timedelta
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # Python < 3.9
+
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -310,6 +315,14 @@ def get_tips_shown(telegram_id: int) -> int:
     return row["tips_shown"] if row else 0
 
 
+def get_user_timezone(user_id: int) -> str:
+    """Часовой пояс пользователя для отображения дат (например Europe/Moscow)."""
+    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
+    if row and row.get("timezone"):
+        return (row["timezone"] or "").strip() or "Europe/Moscow"
+    return "Europe/Moscow"
+
+
 # ── Settings ──────────────────────────────────────────────────────────────
 
 DEFAULT_SETTINGS = {
@@ -411,14 +424,100 @@ def get_active_tasks(user_id: int) -> list[dict]:
     )
 
 
+def get_active_tasks_ordered(user_id: int) -> list[dict]:
+    """Активные задачи в порядке для списка: по дате, времени, id (стабильная нумерация)."""
+    rows = _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' ORDER BY COALESCE(due_date, '9999-99-99'), COALESCE(due_time, ''), id",
+        (user_id,),
+    )
+    return rows
+
+
+def transfer_overdue_tasks(user_id: int) -> int:
+    """Переносит просроченные активные задачи (due_date < сегодня) на сегодня. Возвращает число перенесённых."""
+    today_str, _ = _get_today_in_user_tz(user_id)
+    n = _execute(
+        "UPDATE tasks SET due_date = %s WHERE user_id = %s AND status = 'active' AND due_date IS NOT NULL AND due_date < %s",
+        (today_str, user_id, today_str),
+    )
+    if n and n > 0:
+        logger.info("transfer_overdue_tasks: user_id=%s moved %s tasks to %s", user_id, n, today_str)
+    return n or 0
+
+
+def find_tasks_matching_text(user_id: int, search: str) -> list[dict]:
+    """Все активные задачи, в тексте которых встречается search (подстрока или все слова)."""
+    search_lower = search.lower().strip()
+    if not search_lower:
+        return []
+    tasks = get_active_tasks_ordered(user_id)
+    out = []
+    for t in tasks:
+        if search_lower in (t.get("text") or "").lower():
+            out.append(t)
+            continue
+        words = search_lower.split()
+        if words and all(w in (t.get("text") or "").lower() for w in words):
+            out.append(t)
+    return out
+
+
+def _get_today_in_user_tz(user_id: int) -> tuple[str, int]:
+    """Возвращает (дата YYYY-MM-DD в часовом поясе пользователя, weekday 0=пн..6=вс)."""
+    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
+    tz_name = "Europe/Moscow"
+    if row and row.get("timezone"):
+        tz_name = (row["timezone"] or "").strip() or tz_name
+    if ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+            now = datetime.now(tz)
+        except Exception:
+            now = datetime.now(timezone.utc)
+    else:
+        now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%d"), now.weekday()  # weekday: 0=Monday, 6=Sunday
+
+
+# День недели для рутин: пн=0, вт=1, ср=2, чт=3, пт=4, сб=5, вс=6 (как в Python weekday)
+_ROUTINE_DAY_MAP = {
+    "пн": 0, "вт": 1, "ср": 2, "чт": 3, "пт": 4, "сб": 5, "вс": 6,
+    "ежедневно": -1,  # показывать каждый день
+}
+
+
+def _routine_matches_today(task: dict, today_weekday: int) -> bool:
+    """Проверяет, должна ли рутина показываться сегодня (по repeat_day)."""
+    repeat = (task.get("repeat_day") or "").strip()
+    if not repeat:
+        return True
+    if repeat.lower() == "ежедневно":
+        return True
+    days = [d.strip().lower() for d in repeat.split(",")]
+    for d in days:
+        wd = _ROUTINE_DAY_MAP.get(d)
+        if wd == today_weekday or wd == -1:
+            return True
+    return False
+
+
 def get_today_tasks(user_id: int) -> list[dict]:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return _fetchall(
+    """Задачи на сегодня: дата считается в часовом поясе пользователя; рутины — только по repeat_day."""
+    today_str, today_weekday = _get_today_in_user_tz(user_id)
+    rows = _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
         "AND (due_date = %s OR due_date IS NULL) "
         "ORDER BY priority_score DESC",
-        (user_id, today),
+        (user_id, today_str),
     )
+    result = []
+    for t in rows:
+        if t.get("is_routine"):
+            if _routine_matches_today(t, today_weekday):
+                result.append(t)
+        else:
+            result.append(t)
+    return result
 
 
 def complete_task(task_id: int, user_id: int | None = None) -> bool:
@@ -469,6 +568,34 @@ def get_done_tasks(user_id: int, days: int = 7) -> list[dict]:
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'done' "
         "AND completed_at >= %s ORDER BY completed_at DESC",
         (user_id, cutoff),
+    )
+
+
+def get_done_tasks_today(user_id: int) -> list[dict]:
+    """Выполненные задачи за сегодня (по календарному дню в часовом поясе пользователя)."""
+    today_str, _ = _get_today_in_user_tz(user_id)
+    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
+    tz_name = (row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+    if ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+            y, m, d = map(int, today_str.split("-"))
+            start = datetime(y, m, d, 0, 0, 0, tzinfo=tz)
+            end = start + timedelta(days=1)
+            start_utc = start.astimezone(timezone.utc).isoformat()
+            end_utc = end.astimezone(timezone.utc).isoformat()
+        except Exception:
+            start_utc = today_str + "T00:00:00+00:00"
+            end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
+            end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
+    else:
+        start_utc = today_str + "T00:00:00+00:00"
+        end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
+        end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
+    return _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'done' "
+        "AND completed_at >= %s AND completed_at < %s ORDER BY completed_at DESC",
+        (user_id, start_utc, end_utc),
     )
 
 

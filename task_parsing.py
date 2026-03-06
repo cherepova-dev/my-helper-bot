@@ -13,6 +13,14 @@ ADD_PREFIXES = (
 )
 ADD_PREFIXES_LOWER = [p.lower() for p in ADD_PREFIXES]
 
+# Маркеры «отметь / выполни ...» — выполнение задачи.
+DONE_PREFIXES = (
+    "отметь", "отметить", "выполни", "выполнить", "сделай", "сделать",
+    "заверши", "завершить", "отметь задачу", "выполни задачу",
+    "отметить задачу", "выполнить задачу", "сделано", "готово",
+)
+DONE_PREFIXES_LOWER = [p.lower() for p in sorted(DONE_PREFIXES, key=len, reverse=True)]
+
 
 def parse_due_date(text: str, today: datetime | None = None) -> str | None:
     """
@@ -104,6 +112,38 @@ def starts_with_add_marker(text: str) -> bool:
     """True, если текст начинается с одного из маркеров добавления задачи."""
     lower = text.strip().lower()
     return any(lower.startswith(p) for p in ADD_PREFIXES_LOWER)
+
+
+def starts_with_done_marker(text: str) -> bool:
+    """True, если текст начинается с маркера выполнения задачи (отметь, выполни и т.д.)."""
+    lower = text.strip().lower()
+    return any(lower.startswith(p) for p in DONE_PREFIXES_LOWER)
+
+
+def extract_done_target(text: str) -> tuple[int | None, str]:
+    """
+    После маркера «отметь/выполни» извлекает номер задачи (1-based) или текст для поиска.
+    Возвращает (number, rest_text): если после маркера число — (N, ""), иначе (None, rest).
+    """
+    t = text.strip()
+    lower = t.lower()
+    rest = ""
+    for prefix in DONE_PREFIXES_LOWER:
+        if lower.startswith(prefix):
+            rest = t[len(prefix):].strip()
+            rest = re.sub(r"^(?:задач[уа]\.?\s*)?", "", rest, flags=re.IGNORECASE).strip()
+            break
+    if not rest:
+        return None, ""
+    # Один номер?
+    m = re.match(r"^(\d+)\s*$", rest)
+    if m:
+        return int(m.group(1)), ""
+    # Несколько слов — первое число как номер? "3" или "задачу 3" уже убрано. Остаток "купить молоко" или "3"
+    m = re.match(r"^(\d+)\s*[,.]?\s*", rest)
+    if m:
+        return int(m.group(1)), rest[m.end():].strip() or ""
+    return None, rest
 
 
 def clean_task_text_from_datetime(text: str) -> str:

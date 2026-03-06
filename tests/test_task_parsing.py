@@ -17,6 +17,8 @@ from task_parsing import (
     parse_due_time,
     extract_task_text,
     starts_with_add_marker,
+    starts_with_done_marker,
+    extract_done_target,
     clean_task_text_from_datetime,
 )
 
@@ -180,3 +182,36 @@ class TestCleanTaskTextFromDatetime:
 
     def test_plain_text_unchanged(self):
         assert clean_task_text_from_datetime("Позвонить маме") == "Позвонить маме"
+
+
+class TestStartsWithDoneMarker:
+    """Маркеры выполнения задачи: отметь, выполни и т.д."""
+
+    def test_yes(self):
+        assert starts_with_done_marker("Отметь 3") is True
+        assert starts_with_done_marker("выполни купить молоко") is True
+        assert starts_with_done_marker("Отметить задачу полить цветы") is True
+        assert starts_with_done_marker("сделано") is True
+        assert starts_with_done_marker("Готово") is True
+
+    def test_no(self):
+        assert starts_with_done_marker("купить молоко") is False
+        assert starts_with_done_marker("добавь задачу") is False
+        assert starts_with_done_marker("") is False
+
+
+class TestExtractDoneTarget:
+    """Извлечение номера или текста после маркера выполнения."""
+
+    def test_by_number(self):
+        assert extract_done_target("отметь 3") == (3, "")
+        assert extract_done_target("выполни 1") == (1, "")
+        assert extract_done_target("Отметь задачу 5") == (5, "")
+
+    def test_by_text(self):
+        assert extract_done_target("выполни купить молоко") == (None, "купить молоко")
+        assert extract_done_target("отметь задачу полить цветы") == (None, "полить цветы")
+
+    def test_empty_after_marker(self):
+        assert extract_done_target("отметь") == (None, "")
+        assert extract_done_target("выполни") == (None, "")

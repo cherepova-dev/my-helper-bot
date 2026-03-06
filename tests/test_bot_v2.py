@@ -17,7 +17,12 @@ from task_parsing import (
     extract_task_text,
     starts_with_add_marker,
 )
-from bot_v2 import _format_task_list, _build_confirmation
+from bot_v2 import (
+    _format_task_list,
+    _build_confirmation,
+    _format_today_list,
+    _format_done_report,
+)
 
 
 MONDAY = datetime(2026, 3, 2, 12, 0, 0)
@@ -122,3 +127,34 @@ class TestBuildConfirmation:
         result = _build_confirmation("купить молоко", "2026-03-03", "завтра", None)
         assert "купить молоко" in result
         assert "Задача принята" in result
+
+
+class TestFormatTodayList:
+    """Список на сегодня с нумерацией (_format_today_list). Принимает список пар (номер, задача)."""
+
+    def test_empty(self):
+        result = _format_today_list([])
+        assert "План на сегодня" in result
+
+    def test_with_tasks(self):
+        ordered_today = [
+            (2, {"text": "позвонить", "category_emoji": "📝", "due_time": "10:00", "id": 1}),
+            (5, {"text": "встреча", "category_emoji": "📝", "due_time": None, "id": 2}),
+        ]
+        result = _format_today_list(ordered_today)
+        assert "позвонить" in result and "встреча" in result
+        assert "2." in result and "5." in result
+
+
+class TestFormatDoneReport:
+    """Отчёт по выполненным (_format_done_report)."""
+
+    def test_empty(self):
+        result = _format_done_report([], "Сделано сегодня")
+        assert "Сделано сегодня" in result
+        assert "Нет выполненных" in result
+
+    def test_with_tasks(self):
+        tasks = [{"text": "Купить молоко"}, {"text": "Позвонить"}]
+        result = _format_done_report(tasks, "Сделано за неделю")
+        assert "Купить молоко" in result and "Позвонить" in result

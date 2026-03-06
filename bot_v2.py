@@ -28,6 +28,8 @@ from task_parsing import (
     parse_due_time,
     extract_task_text,
     starts_with_add_marker,
+    starts_with_done_marker,
+    extract_done_target,
     clean_task_text_from_datetime,
 )
 
@@ -55,14 +57,32 @@ BOT_COMMANDS = [
     ("start", "Начать"),
     ("add", "Добавить задачу"),
     ("tasks", "Список задач"),
+    ("today", "План на сегодня"),
+    ("done", "Отметить выполнение"),
+    ("done_today", "Сделано сегодня"),
+    ("done_week", "Сделано за неделю"),
 ]
+
+# Синонимы для текстовых/голосовых команд (без слэша)
+SYN_LIST_TASKS = (
+    "покажи список задач", "список задач", "все задачи", "мои задачи",
+    "покажи список", "что в списке", "план", "задачи",
+)
+SYN_TODAY = (
+    "план на сегодня", "задачи на сегодня", "что на сегодня", "на сегодня",
+    "покажи задачи на сегодня", "покажи план на сегодня",
+)
+SYN_ADD_TASK = (
+    "добавить задачу", "новая задача", "добавить новую задачу", "создать задачу",
+)
+# Маркеры выполнения — в task_parsing (отметь, выполни и т.д.)
 
 ONBOARDING_V2 = (
     "Привет! Я помощник по задачам.\n\n"
-    "*Как добавить задачу:*\n"
-    "• Нажми «Добавить задачу» и отправь следующим сообщением текст задачи\n"
-    "• Или напиши: «Добавь [задача]», «Создай [задача]», «Запиши [задача]»\n\n"
-    "«Список задач» — покажет все активные задачи."
+    "*Добавить задачу:* «Добавить задачу» → текст задачи или: «Добавь [задача]», «Создай [задача]».\n\n"
+    "*Список задач* — все активные (с номерами). *План на сегодня* — на сегодня.\n\n"
+    "*Выполнить:* «Отметь 3» или «Выполни [название]» — по номеру из списка или по названию.\n\n"
+    "*Отчёты:* «Сделано сегодня» / «Сделано за неделю»."
 )
 
 
@@ -132,55 +152,54 @@ def _format_time_human(time_str: str) -> str:
     return (time_str or "").strip()
 
 
-def _format_task_list(tasks: list[dict]) -> str:
-    """Форматирует список активных задач: группировка по дате, сортировка по дате и времени, человекочитаемые дата/время."""
+def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
+    """Форматирует список активных задач: нумерация, группировка по дате, человекочитаемые дата/время."""
     if not tasks:
         return "_Пока нет активных задач. Добавь задачу через меню или напиши «Добавь [задача]»._"
 
-    # Сортировка: сначала с датой (по дате, затем по времени), потом без даты
     def sort_key(t: dict) -> tuple:
         d = t.get("due_date") or ""
         ti = t.get("due_time") or ""
-        return (d, ti)
+        return (d, ti, t.get("id", 0))
 
     sorted_tasks = sorted(tasks, key=sort_key)
+    numbered = list(enumerate(sorted_tasks, start=1))  # [(1, t), (2, t), ...]
 
-    # Группировка по дате
-    by_date: dict[str, list[dict]] = {}
-    for t in sorted_tasks:
+    by_date: dict[str, list[tuple[int, dict]]] = {}
+    for num, t in numbered:
         d = t.get("due_date") or ""
         if d not in by_date:
             by_date[d] = []
-        by_date[d].append(t)
+        by_date[d].append((num, t))
 
     lines = [f"📋 *Все задачи ({len(tasks)})*\n"]
 
-    # Сначала задачи с датой (пустая строка = без срока в конце)
     date_keys = [k for k in by_date if k]
     date_keys.sort()
     for date_str in date_keys:
         group = by_date[date_str]
         label = _format_date_human(date_str)
         lines.append(f"*📅 {label}*")
-        for t in group:
+        for num, t in group:
             emoji = t.get("category_emoji") or "📝"
             text = t["text"]
             time_part = ""
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
-            lines.append(f"☐ {emoji} {text}{time_part}")
+            prefix = f"{num}. " if with_numbers else ""
+            lines.append(f"{prefix}☐ {emoji} {text}{time_part}")
         lines.append("")
 
-    # Задачи без срока
     if "" in by_date:
         lines.append("*📅 Без срока*")
-        for t in by_date[""]:
+        for num, t in by_date[""]:
             emoji = t.get("category_emoji") or "📝"
             text = t["text"]
             time_part = ""
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
-            lines.append(f"☐ {emoji} {text}{time_part}")
+            prefix = f"{num}. " if with_numbers else ""
+            lines.append(f"{prefix}☐ {emoji} {text}{time_part}")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -224,7 +243,9 @@ async def _save_one_task_and_reply(
     due_date = _parse_due_date(task_text)
     due_time = _parse_due_time(task_text)
     # Убираем дату и время из названия задачи — они хранятся в полях due_date/due_time
-    task_title = clean_task_text_from_datetime(task_text) or task_text
+    task_title = (clean_task_text_from_datetime(task_text) or task_text).strip()
+    if task_title:
+        task_title = task_title.upper()
     date_label = ""
 
     if due_date:
@@ -285,12 +306,136 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def _active_tasks_display_order(user_id: int) -> list[dict]:
+    """Активные задачи в порядке отображения в списке (для нумерации и «выполни N»)."""
+    tasks = db.get_active_tasks_ordered(user_id)
+    def key(t):
+        return (t.get("due_date") or "", t.get("due_time") or "", t.get("id", 0))
+    return sorted(tasks, key=key)
+
+
 async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     user_row = db.get_or_create_user(user.id, user.first_name or "")
-    tasks = db.get_active_tasks(user_row["id"])
+    uid = user_row["id"]
+    db.transfer_overdue_tasks(uid)
+    tasks = _active_tasks_display_order(uid)
     text = _format_task_list(tasks)
     await _reply(update, text)
+
+
+async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    user_row = db.get_or_create_user(user.id, user.first_name or "")
+    uid = user_row["id"]
+    db.transfer_overdue_tasks(uid)
+    ordered = _active_tasks_display_order(uid)
+    today_tasks = db.get_today_tasks(uid)
+    today_ids = {t["id"] for t in today_tasks}
+    # Нумерация как в полном списке (чтобы «отметь 5» работало однозначно)
+    ordered_today = [(i, t) for i, t in enumerate(ordered, start=1) if t["id"] in today_ids]
+    text = _format_today_list(ordered_today) if ordered_today else "_На сегодня задач нет._"
+    await _reply(update, text)
+
+
+def _format_today_list(ordered_today: list[tuple[int, dict]]) -> str:
+    """Список задач на сегодня: список пар (номер в общем списке, задача)."""
+    lines = ["📅 *План на сегодня*\n"]
+    for num, t in ordered_today:
+        emoji = t.get("category_emoji") or "📝"
+        time_part = f" в {_format_time_human(t['due_time'])}" if t.get("due_time") else ""
+        lines.append(f"{num}. ☐ {emoji} {t['text']}{time_part}")
+    return "\n".join(lines)
+
+
+async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _reply(
+        update,
+        "Напиши *номер* задачи из списка (например: _3_) или часть названия.\n"
+        "Примеры: «Отметь 3», «Выполни купить молоко».",
+    )
+
+
+def _format_done_report(tasks: list[dict], title: str) -> str:
+    if not tasks:
+        return f"{title}\n\n_Нет выполненных задач._"
+    lines = [f"✅ *{title}*\n"]
+    for t in tasks:
+        text = (t.get("text") or "").strip()
+        lines.append(f"• {text}")
+    return "\n".join(lines)
+
+
+async def cmd_done_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    user_row = db.get_or_create_user(user.id, user.first_name or "")
+    tasks = db.get_done_tasks_today(user_row["id"])
+    text = _format_done_report(tasks, "Сделано сегодня")
+    await _reply(update, text)
+
+
+async def cmd_done_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    user_row = db.get_or_create_user(user.id, user.first_name or "")
+    tasks = db.get_done_tasks(user_row["id"], days=7)
+    text = _format_done_report(tasks, "Сделано за неделю")
+    await _reply(update, text)
+
+
+async def _handle_complete(
+    update: Update, user_row: dict, text: str
+) -> None:
+    """Обработка «отметь N» / «выполни название»: по номеру или по тексту, при нескольких — уточнение."""
+    uid = user_row["id"]
+    num, rest = extract_done_target(text)
+    ordered = _active_tasks_display_order(uid)
+    if not ordered:
+        await _reply(update, "Нет активных задач для выполнения.")
+        return
+    # По номеру
+    if num is not None:
+        if 1 <= num <= len(ordered):
+            task = ordered[num - 1]
+            if db.complete_task(task["id"], uid):
+                await _reply(update, f"✅ Выполнено: «{task['text']}»")
+            else:
+                await _reply(update, "Не удалось отметить задачу.")
+        else:
+            await _reply(update, f"Нет задачи с номером {num}. В списке задач от 1 до {len(ordered)}.")
+        return
+    # По названию
+    if not rest:
+        await _reply(update, "Напиши номер задачи или часть названия. Например: «Отметь 3» или «Выполни купить молоко».")
+        return
+    matches = db.find_tasks_matching_text(uid, rest)
+    if not matches:
+        await _reply(update, f"Задача по запросу «{rest}» не найдена.")
+        return
+    if len(matches) == 1:
+        task = matches[0]
+        if db.complete_task(task["id"], uid):
+            await _reply(update, f"✅ Выполнено: «{task['text']}»")
+        else:
+            await _reply(update, "Не удалось отметить задачу.")
+        return
+    # Несколько совпадений — показать номера и попросить уточнить
+    ordered_ids = {t["id"]: i for i, t in enumerate(ordered, start=1)}
+    parts = []
+    for t in matches:
+        n = ordered_ids.get(t["id"], "?")
+        parts.append(f"{n}. {t['text']}")
+    msg = (
+        f"Найдено задач: {len(matches)}.\n\n"
+        + "\n".join(parts)
+        + "\n\n_Уточните, какую отметить: напишите номер (например, 1 или 4)._"
+    )
+    await _reply(update, msg)
+
+
+def _match_synonym(text: str, phrases: tuple[str, ...]) -> bool:
+    """True, если текст (нижний регистр) совпадает с фразой или содержит её."""
+    lower = text.strip().lower()
+    return any(p in lower or lower == p for p in phrases)
 
 
 # ─── Обработка текста и голоса ─────────────────────────────────────────────
@@ -309,6 +454,37 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _save_one_task_and_reply(update, user_row, text)
         return
 
+    # Синонимы: список задач
+    if _match_synonym(text, SYN_LIST_TASKS):
+        uid = user_row["id"]
+        db.transfer_overdue_tasks(uid)
+        tasks = _active_tasks_display_order(uid)
+        await _reply(update, _format_task_list(tasks))
+        return
+
+    # Синонимы: план на сегодня
+    if _match_synonym(text, SYN_TODAY):
+        uid = user_row["id"]
+        db.transfer_overdue_tasks(uid)
+        ordered = _active_tasks_display_order(uid)
+        today_tasks = db.get_today_tasks(uid)
+        today_ids = {t["id"] for t in today_tasks}
+        ordered_today = [(i, t) for i, t in enumerate(ordered, start=1) if t["id"] in today_ids]
+        msg = _format_today_list(ordered_today) if ordered_today else "_На сегодня задач нет._"
+        await _reply(update, msg)
+        return
+
+    # Синонимы: добавить задачу (без текста задачи) — включить режим «следующее сообщение = задача»
+    if _match_synonym(text, SYN_ADD_TASK):
+        _awaiting_task[user.id] = True
+        await _reply(update, "Напиши или надиктуй задачу — *следующее* сообщение я сохраню как задачу.")
+        return
+
+    # Выполнение: «отметь 3», «выполни купить молоко»
+    if starts_with_done_marker(text):
+        await _handle_complete(update, user_row, text)
+        return
+
     # Фраза вида «Добавь ...» / «Создай ...» / «Запиши ...»
     if starts_with_add_marker(text):
         task_text = extract_task_text(text)
@@ -319,7 +495,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _reply(
         update,
         "Чтобы добавить задачу: нажми «Добавить задачу» и отправь текст задачи, "
-        "или напиши: «Добавь [задача]», «Создай [задача]», «Запиши [задача]».",
+        "или напиши: «Добавь [задача]», «Создай [задача]», «Запиши [задача]». "
+        "«Список задач» — все задачи, «План на сегодня» — на сегодня. «Отметь 3» — выполнить задачу №3.",
     )
 
 
@@ -345,11 +522,38 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _reply(update, "⚠️ Речь не распознана. Напиши задачу текстом.")
         return
 
+    text = text.strip()
     await update.message.reply_text(f"🎤 Распознано: «{text[:200]}{'…' if len(text) > 200 else ''}»")
 
-    # Тот же алгоритм, что и для текста
     if _awaiting_task.pop(user.id, False):
-        await _save_one_task_and_reply(update, user_row, text.strip())
+        await _save_one_task_and_reply(update, user_row, text)
+        return
+
+    if _match_synonym(text, SYN_LIST_TASKS):
+        uid = user_row["id"]
+        db.transfer_overdue_tasks(uid)
+        tasks = _active_tasks_display_order(uid)
+        await _reply(update, _format_task_list(tasks))
+        return
+
+    if _match_synonym(text, SYN_TODAY):
+        uid = user_row["id"]
+        db.transfer_overdue_tasks(uid)
+        ordered = _active_tasks_display_order(uid)
+        today_tasks = db.get_today_tasks(uid)
+        today_ids = {t["id"] for t in today_tasks}
+        ordered_today = [(i, t) for i, t in enumerate(ordered, start=1) if t["id"] in today_ids]
+        msg = _format_today_list(ordered_today) if ordered_today else "_На сегодня задач нет._"
+        await _reply(update, msg)
+        return
+
+    if _match_synonym(text, SYN_ADD_TASK):
+        _awaiting_task[user.id] = True
+        await _reply(update, "Напиши или надиктуй задачу — *следующее* сообщение я сохраню как задачу.")
+        return
+
+    if starts_with_done_marker(text):
+        await _handle_complete(update, user_row, text)
         return
 
     if starts_with_add_marker(text):
@@ -357,8 +561,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _save_one_task_and_reply(update, user_row, task_text)
         return
 
-    # Голос без маркера — считаем весь текст задачей (как «следующее сообщение» после add)
-    await _save_one_task_and_reply(update, user_row, text.strip())
+    await _save_one_task_and_reply(update, user_row, text)
 
 
 # ─── Меню и запуск ─────────────────────────────────────────────────────────
@@ -406,6 +609,10 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("tasks", cmd_tasks))
+    app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("done", cmd_done))
+    app.add_handler(CommandHandler("done_today", cmd_done_today))
+    app.add_handler(CommandHandler("done_week", cmd_done_week))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
