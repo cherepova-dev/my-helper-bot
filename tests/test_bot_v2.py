@@ -121,6 +121,17 @@ class TestFormatTaskList:
         assert result.index("позвонить") < result.index("встреча")
         assert "Без срока" in result or "без срока" in result.lower()
 
+    def test_routines_block_and_regularity(self):
+        """Список с рутинами: отдельный блок «Рутины» с подписью регулярности (RT-F7)."""
+        tasks = [
+            {"text": "разовая задача", "category_emoji": "📝", "due_date": "2026-03-05", "due_time": None, "is_routine": False},
+            {"text": "полив цветов", "category_emoji": "🔁", "due_date": None, "due_time": None, "is_routine": True, "repeat_day": "чт"},
+        ]
+        result = _format_task_list(tasks)
+        assert "Рутины" in result
+        assert "полив цветов" in result
+        assert "четверг" in result.lower() or "Четверг" in result
+
 
 class TestBuildConfirmation:
     """Текст подтверждения задачи (_build_confirmation)."""
@@ -138,6 +149,19 @@ class TestBuildConfirmation:
         )
         assert "Быт / дом" in result
         assert "🏠" in result
+
+    def test_routine_confirmation_shows_repeat(self):
+        """Подтверждение рутины показывает регулярность вместо даты (🔁)."""
+        result = _build_confirmation(
+            "Зарядка", None, "рутина", None,
+            category_emoji="🌿",
+            category_name="Для себя",
+            is_routine=True,
+            repeat_day="ежедневно",
+        )
+        assert "Зарядка" in result
+        assert "Ежедневно" in result
+        assert "🔁" in result
 
 
 class TestFormatTodayList:

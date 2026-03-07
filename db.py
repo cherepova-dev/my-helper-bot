@@ -6,6 +6,7 @@
 """
 
 import os
+import random
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -398,6 +399,10 @@ def add_task(
 ) -> dict:
     logger.info("add_task: text='%s' is_routine=%s repeat_day=%s due_date=%s",
                 text[:40], is_routine, repeat_day, due_date)
+    # US-RT7: если рутина «раз в неделю» без дня — назначаем случайный день
+    if is_routine and repeat_day and repeat_day.strip().lower() == ROUTINE_WEEKLY_NO_DAY:
+        repeat_day = random.choice(_ROUTINE_DAY_CODES)
+        logger.info("add_task: assigned random weekday for weekly routine: %s", repeat_day)
     score = _calc_score(priority_value, priority_urgency, priority_risk, priority_size)
     result = _insert_returning(
         """INSERT INTO tasks
@@ -529,6 +534,37 @@ _ROUTINE_DAY_MAP = {
     "пн": 0, "вт": 1, "ср": 2, "чт": 3, "пт": 4, "сб": 5, "вс": 6,
     "ежедневно": -1,  # показывать каждый день
 }
+
+# Маркер «раз в неделю» без дня — при сохранении подставляется случайный день (US-RT7)
+ROUTINE_WEEKLY_NO_DAY = "раз в неделю"
+_ROUTINE_DAY_CODES = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+# Человекочитаемые названия дней для отображения
+_REPEAT_DAY_DISPLAY = {
+    "пн": "Каждый понедельник",
+    "вт": "Каждый вторник",
+    "ср": "Каждую среду",
+    "чт": "Каждый четверг",
+    "пт": "Каждую пятницу",
+    "сб": "Каждую субботу",
+    "вс": "Каждое воскресенье",
+    "ежедневно": "Ежедневно",
+}
+
+
+def format_repeat_day_display(repeat_day: str | None) -> str:
+    """Форматирует repeat_day для отображения пользователю («Каждый понедельник», «Ежедневно», «Вторник и четверг»)."""
+    if not repeat_day or not (repeat_day := repeat_day.strip()):
+        return "—"
+    if repeat_day.lower() == "ежедневно":
+        return "Ежедневно"
+    parts = [d.strip().lower() for d in repeat_day.split(",") if d.strip()]
+    if not parts:
+        return repeat_day
+    labels = [_REPEAT_DAY_DISPLAY.get(p, p) for p in parts]
+    if len(labels) == 1:
+        return labels[0]
+    return " и ".join(labels)
 
 
 def _routine_matches_today(task: dict, today_weekday: int) -> bool:

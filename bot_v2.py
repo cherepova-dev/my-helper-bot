@@ -28,6 +28,7 @@ from telegram.ext import (
 
 import db
 import ai_module
+import routines
 from categories import assign_category
 from task_parsing import (
     parse_due_date,
@@ -66,6 +67,7 @@ BOT_COMMANDS = [
     ("add", "Добавить задачу"),
     ("tasks", "Список задач"),
     ("today", "План на сегодня"),
+    ("routines", "Рутины"),
     ("done", "Отметить выполнение"),
     ("done_today", "Сделано сегодня"),
     ("done_week", "Сделано за неделю"),
@@ -90,6 +92,9 @@ SYN_DONE_TODAY = (
 SYN_DONE_WEEK = (
     "отчёт за неделю", "сделано за неделю", "выполнено за неделю",
     "что сделала за неделю", "что сделал за неделю", "мои достижения за неделю",
+)
+SYN_ROUTINES = (
+    "рутины", "мои рутины", "покажи рутины", "список рутин", "регулярные дела",
 )
 # Маркеры выполнения — в task_parsing (отметь, выполни и т.д.)
 
@@ -131,15 +136,19 @@ def _build_confirmation(
     due_time: str | None,
     category_emoji: str = "📝",
     category_name: str = "Другое",
+    is_routine: bool = False,
+    repeat_day: str | None = None,
 ) -> str:
     """Текст подтверждения одной задачи."""
-    if due_date and date_label:
+    if is_routine and repeat_day:
+        date_display = f"🔁 {db.format_repeat_day_display(repeat_day)}"
+    elif due_date and date_label:
         date_display = f"{date_label} ({due_date})"
     elif due_date:
         date_display = due_date
     else:
         date_display = "без срока"
-    if due_time:
+    if due_time and not is_routine:
         date_display += f" в {due_time}"
     lines = [
         "✅ *Задача принята*",
@@ -176,7 +185,7 @@ def _format_time_human(time_str: str) -> str:
 
 
 def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
-    """Форматирует список активных задач: нумерация, группировка по дате, человекочитаемые дата/время."""
+    """Форматирует список активных задач: нумерация, группировка по дате, блок «Рутины» с регулярностью (RT-F7)."""
     if not tasks:
         return "_Пока нет активных задач. Добавь задачу через меню или напиши «Добавь [задача]»._"
 
@@ -188,8 +197,11 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
     sorted_tasks = sorted(tasks, key=sort_key)
     numbered = list(enumerate(sorted_tasks, start=1))  # [(1, t), (2, t), ...]
 
+    regular = [(num, t) for num, t in numbered if not t.get("is_routine")]
+    routines_list = [(num, t) for num, t in numbered if t.get("is_routine")]
+
     by_date: dict[str, list[tuple[int, dict]]] = {}
-    for num, t in numbered:
+    for num, t in regular:
         d = t.get("due_date") or ""
         if d not in by_date:
             by_date[d] = []
@@ -210,7 +222,7 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
             prefix = f"{num}. " if with_numbers else ""
-            lines.append(f"{prefix}☐ {emoji} {text}{time_part}")
+            lines.append(f"{prefix}{emoji} {text}{time_part}")
         lines.append("")
 
     if "" in by_date:
@@ -222,7 +234,17 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
             prefix = f"{num}. " if with_numbers else ""
-            lines.append(f"{prefix}☐ {emoji} {text}{time_part}")
+            lines.append(f"{prefix}{emoji} {text}{time_part}")
+        lines.append("")
+
+    if routines_list:
+        lines.append("*🔁 Рутины*")
+        for num, t in routines_list:
+            emoji = t.get("category_emoji") or "🔁"
+            text = t["text"]
+            repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
+            prefix = f"{num}. " if with_numbers else ""
+            lines.append(f"{prefix}{emoji} {text} — _{repeat_label}_")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -263,10 +285,13 @@ async def _save_one_task_and_reply(
     internal_user_id = user_row["id"]
     settings = db.get_settings(internal_user_id)
 
-    due_date = _parse_due_date(task_text)
-    due_time = _parse_due_time(task_text)
-    # Убираем дату и время из названия задачи — они хранятся в полях due_date/due_time
+    is_routine, repeat_day = routines.is_routine_and_repeat(task_text)
+    due_date = _parse_due_date(task_text) if not is_routine else None
+    due_time = _parse_due_time(task_text) if not is_routine else None
+    # Убираем дату, время и фразы рутины из названия задачи
     task_title = (clean_task_text_from_datetime(task_text) or task_text).strip()
+    if is_routine:
+        task_title = (routines.clean_task_title_from_routine_phrases(task_title) or task_title).strip()
     if task_title:
         task_title = task_title.capitalize()
     date_label = ""
@@ -275,7 +300,9 @@ async def _save_one_task_and_reply(
     _raw_for_cat = (clean_task_text_from_datetime(task_text) or task_text).strip()
     category_emoji, category_name = assign_category(_raw_for_cat)
 
-    if due_date:
+    if is_routine:
+        date_label = "рутина"
+    elif due_date:
         lower = task_text.lower()
         if "сегодня" in lower:
             date_label = "сегодня"
@@ -302,12 +329,16 @@ async def _save_one_task_and_reply(
             priority_urgency=5,
             priority_risk=5,
             priority_size=5,
+            is_routine=is_routine,
+            repeat_day=repeat_day,
         )
         if task_row:
             msg = _build_confirmation(
                 task_title, due_date, date_label, due_time,
                 category_emoji=category_emoji,
                 category_name=category_name,
+                is_routine=is_routine,
+                repeat_day=task_row.get("repeat_day") or repeat_day,
             )
             await _reply(update, msg)
             logger.info("v2: задача сохранена id=%s text='%s'", task_row.get("id"), task_title[:50])
@@ -371,13 +402,30 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, text)
 
 
+async def cmd_routines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отдельный экран со списком рутин и регулярностью (RT-F4, RT-F5)."""
+    user = update.effective_user
+    user_row = db.get_or_create_user(user.id, user.first_name or "")
+    uid = user_row["id"]
+    routine_tasks = db.get_routine_tasks(uid)
+    if not routine_tasks:
+        await _reply(update, "🔁 *Рутины*\n\n_Пока нет рутин. Добавь, например: «Ежедневная зарядка», «Поливать цветы каждый четверг», «Уборка раз в неделю»._")
+        return
+    lines = ["🔁 *Рутины*\n"]
+    for i, t in enumerate(routine_tasks, start=1):
+        repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
+        emoji = t.get("category_emoji") or "🔁"
+        lines.append(f"{i}. {emoji} {t['text']} — _{repeat_label}_")
+    await _reply(update, "\n".join(lines))
+
+
 def _format_today_list(ordered_today: list[tuple[int, dict]], title: str = "📅 *План на сегодня*") -> str:
-    """Список задач на сегодня: список пар (номер в общем списке, задача)."""
+    """Список задач на сегодня: список пар (номер в общем списке, задача). Рутины с 🔁 (RT-F8)."""
     lines = [f"{title}\n"]
     for num, t in ordered_today:
-        emoji = t.get("category_emoji") or "📝"
+        emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
         time_part = f" в {_format_time_human(t['due_time'])}" if t.get("due_time") else ""
-        lines.append(f"{num}. ☐ {emoji} {t['text']}{time_part}")
+        lines.append(f"{num}. {emoji} {t['text']}{time_part}")
     return "\n".join(lines)
 
 
@@ -481,7 +529,8 @@ def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
             text = (t.get("text") or "").strip()
             dt = _parse_completed_at(t.get("completed_at"), tz_name)
             time_str = _format_completed_time(dt) if dt else ""
-            lines.append(f"  • {text}{time_str}")
+            routine_mark = " 🔁" if t.get("is_routine") else ""
+            lines.append(f"  🔺 {text}{time_str}{routine_mark}")
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -539,7 +588,12 @@ def _format_done_report_week(tasks: list[dict], tz_name: str) -> str:
                 text = (t.get("text") or "").strip()
                 dt = _parse_completed_at(t.get("completed_at"), tz_name)
                 time_str = _format_completed_time(dt) if dt else ""
-                lines.append(f"  • {emoji} {text}{time_str}")
+                routine_part = ""
+                if t.get("is_routine") and t.get("repeat_day"):
+                    routine_part = f" 🔁 {db.format_repeat_day_display(t.get('repeat_day'))}"
+                elif t.get("is_routine"):
+                    routine_part = " 🔁"
+                lines.append(f"  🔺 {emoji} {text}{time_str}{routine_part}")
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -552,7 +606,7 @@ def _format_done_report(tasks: list[dict], title: str) -> str:
     for t in tasks:
         emoji = t.get("category_emoji") or "📝"
         text = (t.get("text") or "").strip()
-        lines.append(f"• {emoji} {text}")
+        lines.append(f"🔺 {emoji} {text}")
     return "\n".join(lines)
 
 
@@ -694,6 +748,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _reply(update, msg)
         return
 
+    # Синонимы: рутины
+    if _match_synonym(text, SYN_ROUTINES):
+        await cmd_routines(update, context)
+        return
+
     # Синонимы: сделано сегодня
     if _match_synonym(text, SYN_DONE_TODAY):
         uid = user_row["id"]
@@ -790,6 +849,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _reply(update, msg)
         return
 
+    if _match_synonym(text, SYN_ROUTINES):
+        await cmd_routines(update, context)
+        return
+
     if _match_synonym(text, SYN_DONE_TODAY):
         uid = user_row["id"]
         tasks = db.get_done_tasks_today(uid)
@@ -867,6 +930,7 @@ def main() -> None:
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("tasks", cmd_tasks))
     app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("routines", cmd_routines))
     app.add_handler(CommandHandler("done", cmd_done))
     app.add_handler(CommandHandler("done_today", cmd_done_today))
     app.add_handler(CommandHandler("done_week", cmd_done_week))
