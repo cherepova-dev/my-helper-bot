@@ -38,6 +38,11 @@ from task_parsing import (
     starts_with_done_marker,
     extract_done_target,
     clean_task_text_from_datetime,
+    normalize_task_display,
+    starts_with_edit_marker,
+    extract_edit_target,
+    starts_with_reschedule_marker,
+    extract_reschedule_target,
 )
 
 # Алиасы для использования в _save_one_task_and_reply
@@ -77,10 +82,11 @@ BOT_COMMANDS = [
 SYN_LIST_TASKS = (
     "покажи список задач", "список задач", "все задачи", "мои задачи",
     "покажи список", "что в списке", "план", "задачи",
+    "покажи задачи", "покажи все задачи", "покажи мои задачи",
 )
 SYN_TODAY = (
     "план на сегодня", "задачи на сегодня", "что на сегодня", "на сегодня",
-    "покажи задачи на сегодня", "покажи план на сегодня",
+    "покажи задачи на сегодня", "покажи план на сегодня", "что на сегодня сделать",
 )
 SYN_ADD_TASK = (
     "добавить задачу", "новая задача", "добавить новую задачу", "создать задачу",
@@ -88,15 +94,22 @@ SYN_ADD_TASK = (
 SYN_DONE_TODAY = (
     "что сделала сегодня", "что сделал сегодня", "мои достижения сегодня",
     "сделано сегодня", "выполнено сегодня", "отчёт за день",
+    "покажи отчёт за сегодня", "отчёт за сегодня", "покажи сделанное сегодня",
 )
 SYN_DONE_WEEK = (
     "отчёт за неделю", "сделано за неделю", "выполнено за неделю",
     "что сделала за неделю", "что сделал за неделю", "мои достижения за неделю",
+    "покажи отчёт за неделю", "покажи сделанное за неделю",
 )
 SYN_ROUTINES = (
     "рутины", "мои рутины", "покажи рутины", "список рутин", "регулярные дела",
 )
-# Маркеры выполнения — в task_parsing (отметь, выполни и т.д.)
+SYN_UNCOMPLETE = (
+    "отменить выполнение", "вернуть задачу", "отменить выполнение задачи",
+    "вернуть в список", "отменить выполнение задачи номер",
+)
+# Изменение и перенос — маркеры в task_parsing (изменить задачу, перенеси на ...)
+# SYN_EDIT / SYN_RESCHEDULE не нужны: проверяем starts_with_edit_marker, starts_with_reschedule_marker
 
 ONBOARDING_V2 = (
     "Привет! Я помощник по задачам.\n\n"
@@ -293,7 +306,7 @@ async def _save_one_task_and_reply(
     if is_routine:
         task_title = (routines.clean_task_title_from_routine_phrases(task_title) or task_title).strip()
     if task_title:
-        task_title = task_title.capitalize()
+        task_title = normalize_task_display(task_title)
     date_label = ""
 
     # Определение категории по тексту задачи (до upper — по оригиналу для лучшего матчинга)
@@ -527,10 +540,11 @@ def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
         lines.append(f"*{emoji} {name}*")
         for t in group:
             text = (t.get("text") or "").strip()
-            dt = _parse_completed_at(t.get("completed_at"), tz_name)
+            ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+            dt = _parse_completed_at(ts, tz_name)
             time_str = _format_completed_time(dt) if dt else ""
             routine_mark = " 🔁" if t.get("is_routine") else ""
-            lines.append(f"  🔺 {text}{time_str}{routine_mark}")
+            lines.append(f"  🔹 {text}{time_str}{routine_mark}")
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -549,7 +563,8 @@ def _format_done_report_week(tasks: list[dict], tz_name: str) -> str:
     cat_counts = {}
     by_day: dict[str, list[dict]] = {}
     for t in tasks:
-        dt = _parse_completed_at(t.get("completed_at"), tz_name)
+        ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+        dt = _parse_completed_at(ts, tz_name)
         day_key = dt.strftime("%Y-%m-%d") if dt else "_no_date_"
         if day_key not in by_day:
             by_day[day_key] = []
@@ -569,7 +584,8 @@ def _format_done_report_week(tasks: list[dict], tz_name: str) -> str:
         day_keys.append("_no_date_")
     for day_key in day_keys:
         group = by_day[day_key]
-        dt_first = _parse_completed_at(group[0].get("completed_at"), tz_name) if group else None
+        ts_first = (group[0].get("_use_completed_at") or group[0].get("completed_at") or group[0].get("last_completed_at")) if group else None
+        dt_first = _parse_completed_at(ts_first, tz_name) if group else None
         day_label = _format_date_human(day_key) if day_key and day_key != "_no_date_" else "Без даты"
         wd_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
         wd = wd_names[dt_first.weekday()] if dt_first else ""
@@ -586,14 +602,15 @@ def _format_done_report_week(tasks: list[dict], tz_name: str) -> str:
             sub = by_cat.get((emoji, name), [])
             for t in sub:
                 text = (t.get("text") or "").strip()
-                dt = _parse_completed_at(t.get("completed_at"), tz_name)
+                ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+                dt = _parse_completed_at(ts, tz_name)
                 time_str = _format_completed_time(dt) if dt else ""
                 routine_part = ""
                 if t.get("is_routine") and t.get("repeat_day"):
                     routine_part = f" 🔁 {db.format_repeat_day_display(t.get('repeat_day'))}"
                 elif t.get("is_routine"):
                     routine_part = " 🔁"
-                lines.append(f"  🔺 {emoji} {text}{time_str}{routine_part}")
+                lines.append(f"  🔹 {emoji} {text}{time_str}{routine_part}")
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -606,7 +623,7 @@ def _format_done_report(tasks: list[dict], title: str) -> str:
     for t in tasks:
         emoji = t.get("category_emoji") or "📝"
         text = (t.get("text") or "").strip()
-        lines.append(f"🔺 {emoji} {text}")
+        lines.append(f"🔹 {emoji} {text}")
     return "\n".join(lines)
 
 
@@ -642,7 +659,7 @@ async def _handle_complete(
     if num is not None:
         if 1 <= num <= len(ordered):
             task = ordered[num - 1]
-            if db.complete_task(task["id"], uid):
+            if db.complete_task(task["id"], uid, task=task):
                 await _reply(update, f"🔥 Выполнено: «{task['text']}»")
                 await _send_remaining_today(update, uid)
             else:
@@ -677,7 +694,7 @@ async def _handle_complete(
         return
     if len(matches) == 1:
         task = matches[0]
-        if db.complete_task(task["id"], uid):
+        if db.complete_task(task["id"], uid, task=task):
             await _reply(update, f"🔥 Выполнено: «{task['text']}»")
             await _send_remaining_today(update, uid)
         else:
@@ -695,6 +712,149 @@ async def _handle_complete(
         + "\n\n_Уточните, какую отметить: напишите номер (например, 1 или 4)._"
     )
     await _reply(update, msg)
+
+
+def _extract_uncomplete_number(text: str) -> int | None:
+    """Из «отменить выполнение 1», «вернуть задачу номер 2» извлекает номер (1-based)."""
+    import re
+    lower = text.strip().lower()
+    for syn in SYN_UNCOMPLETE:
+        if syn in lower:
+            rest = text[lower.index(syn) + len(syn):].strip()
+            rest = re.sub(r"^(?:задач[уа]\.?\s*)?(?:номер\s*)?", "", rest, flags=re.IGNORECASE).strip()
+            m = re.match(r"^(\d+)", rest)
+            if m:
+                return int(m.group(1))
+            return None
+    return None
+
+
+async def _handle_uncomplete(update: Update, user_row: dict, text: str) -> None:
+    """Отмена выполнения: вернуть задачу в активные (из списка «Сделано сегодня»)."""
+    uid = user_row["id"]
+    done_tasks = db.get_done_tasks_today(uid)
+    if not done_tasks:
+        await _reply(update, "Сегодня пока нет выполненных задач. Нечего отменять.")
+        return
+    num = _extract_uncomplete_number(text)
+    if num is None:
+        lines = ["Выполнено сегодня (укажи номер для отмены):\n"]
+        for i, t in enumerate(done_tasks, start=1):
+            lines.append(f"{i}. {t.get('text', '')}")
+        lines.append("\n_Напиши, например: «Отменить выполнение 1»_")
+        await _reply(update, "\n".join(lines))
+        return
+    if 1 <= num <= len(done_tasks):
+        task = done_tasks[num - 1]
+        if db.uncomplete_task(task["id"], uid):
+            await _reply(update, f"↩️ Задача «{task.get('text', '')}» снова в списке активных.")
+        else:
+            await _reply(update, "Не удалось отменить выполнение.")
+    else:
+        await _reply(update, f"Нет задачи с номером {num}. В списке выполненных сегодня от 1 до {len(done_tasks)}.")
+
+
+def _resolve_task_by_num_or_search(uid: int, num: int | None, search_text: str | None) -> dict | None:
+    """По номеру (1-based) или по поиску возвращает задачу из активного списка или None."""
+    ordered = _active_tasks_display_order(uid)
+    if not ordered:
+        return None
+    if num is not None:
+        if 1 <= num <= len(ordered):
+            return ordered[num - 1]
+        return None
+    if search_text and search_text.strip():
+        matches = db.find_tasks_matching_text(uid, search_text.strip())
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return None
+    return None
+
+
+async def _handle_edit(update: Update, user_row: dict, text: str) -> None:
+    """Изменить описание задачи: «Изменить задачу 2 на Купить хлеб»."""
+    uid = user_row["id"]
+    num, search_text, new_text = extract_edit_target(text)
+    if not new_text or not new_text.strip():
+        await _reply(
+            update,
+            "Напиши, например: _Изменить задачу 2 на Купить хлеб_ или _Исправить купить молоко на Купить хлеб_.",
+        )
+        return
+    task = _resolve_task_by_num_or_search(uid, num, search_text)
+    if task is None:
+        if num is not None:
+            await _reply(update, f"Нет задачи с номером {num}. Посмотри список задач и укажи верный номер.")
+        else:
+            await _reply(update, f"Задача по запросу «{search_text}» не найдена или найдено несколько — укажи номер.")
+        return
+    new_title = normalize_task_display(new_text.strip())
+    if new_title and new_title[0].isalpha():
+        new_title = new_title[0].upper() + new_title[1:]
+    updated = db.update_task(task["id"], uid, text=new_title)
+    if updated:
+        await _reply(update, f"✏️ Задача обновлена: «{updated.get('text', new_title)}»")
+    else:
+        await _reply(update, "Не удалось изменить задачу.")
+
+
+async def _handle_reschedule(update: Update, user_row: dict, text: str) -> None:
+    """Перенести задачу по дате/времени: «Перенеси задачу 3 на завтра», для рутины — смена дня недели."""
+    uid = user_row["id"]
+    num, search_text, due_date, due_time = extract_reschedule_target(text)
+    task = _resolve_task_by_num_or_search(uid, num, search_text)
+    if task is None:
+        if num is not None:
+            await _reply(update, f"Нет задачи с номером {num}. Посмотри список задач и укажи верный номер.")
+        else:
+            await _reply(update, f"Задача по запросу «{search_text}» не найдена или найдено несколько — укажи номер.")
+        return
+    if not due_date and not due_time:
+        await _reply(
+            update,
+            "Укажи новую дату или время, например: _Перенеси задачу 2 на завтра_, _на пятницу в 10:00_.",
+        )
+        return
+    updates = {}
+    if task.get("is_routine") and due_date:
+        try:
+            from datetime import datetime as _dt
+            wd = _dt.strptime(due_date, "%Y-%m-%d").weekday()
+            day_codes = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+            updates["repeat_day"] = day_codes[wd]
+        except Exception:
+            pass
+    if not task.get("is_routine"):
+        if due_date:
+            updates["due_date"] = due_date
+        if due_time:
+            updates["due_time"] = due_time
+    if not updates and due_date and task.get("is_routine"):
+        try:
+            from datetime import datetime as _dt
+            wd = _dt.strptime(due_date, "%Y-%m-%d").weekday()
+            day_codes = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+            updates["repeat_day"] = day_codes[wd]
+        except Exception:
+            pass
+    if not updates:
+        await _reply(update, "Не удалось определить новую дату или день. Попробуй: _на завтра_, _на пятницу_.")
+        return
+    updated = db.update_task(task["id"], uid, **updates)
+    if updated:
+        if "repeat_day" in updates:
+            label = db.format_repeat_day_display(updates["repeat_day"])
+            await _reply(update, f"📅 Рутина перенесена: «{task.get('text', '')}» — _{label}_")
+        else:
+            parts = [f"«{updated.get('text', task.get('text', ''))}»"]
+            if updates.get("due_date"):
+                parts.append(f"на {updates['due_date']}")
+            if updates.get("due_time"):
+                parts.append(f"в {updates['due_time']}")
+            await _reply(update, "📅 Задача перенесена: " + " ".join(parts))
+    else:
+        await _reply(update, "Не удалось перенести задачу.")
 
 
 def _match_synonym(text: str, phrases: tuple[str, ...]) -> bool:
@@ -775,6 +935,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _reply(update, "Напиши или надиктуй задачу — *следующее* сообщение я сохраню как задачу.")
         return
 
+    # Изменить задачу: «Изменить задачу 2 на Купить хлеб»
+    if starts_with_edit_marker(text):
+        await _handle_edit(update, user_row, text)
+        return
+
+    # Перенести задачу: «Перенеси задачу 3 на завтра»
+    if starts_with_reschedule_marker(text):
+        await _handle_reschedule(update, user_row, text)
+        return
+
+    # Отменить выполнение: «отменить выполнение 1», «вернуть задачу 2»
+    if _match_synonym(text, SYN_UNCOMPLETE):
+        await _handle_uncomplete(update, user_row, text)
+        return
+
     # Выполнение: «отметь 3», «выполни купить молоко»
     if starts_with_done_marker(text):
         await _handle_complete(update, user_row, text)
@@ -786,13 +961,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _save_one_task_and_reply(update, user_row, task_text)
         return
 
-    # Иначе — подсказка
-    await _reply(
-        update,
-        "Чтобы добавить задачу: нажми «Добавить задачу» и отправь текст задачи, "
-        "или напиши: «Добавь [задача]», «Создай [задача]», «Запиши [задача]». "
-        "«Список задач» — все задачи, «План на сегодня» — на сегодня. «Отметь 3» — выполнить задачу №3.",
-    )
+    # По умолчанию: нет явной команды — записываем как задачу
+    await _save_one_task_and_reply(update, user_row, text)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -870,6 +1040,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if _match_synonym(text, SYN_ADD_TASK):
         _awaiting_task[user.id] = True
         await _reply(update, "Напиши или надиктуй задачу — *следующее* сообщение я сохраню как задачу.")
+        return
+
+    if starts_with_edit_marker(text):
+        await _handle_edit(update, user_row, text)
+        return
+
+    if starts_with_reschedule_marker(text):
+        await _handle_reschedule(update, user_row, text)
+        return
+
+    if _match_synonym(text, SYN_UNCOMPLETE):
+        await _handle_uncomplete(update, user_row, text)
         return
 
     if starts_with_done_marker(text):

@@ -24,6 +24,7 @@ from bot_v2 import (
     _format_done_report,
     _format_done_report_today,
     _format_done_report_week,
+    _extract_uncomplete_number,
 )
 
 
@@ -227,3 +228,14 @@ class TestFormatDoneReportWeek:
         result = _format_done_report_week([], "Europe/Moscow")
         assert "Сделано за неделю" in result
         assert "7 дней" in result or "ни одной" in result
+
+
+class TestExtractUncompleteNumber:
+    """Извлечение номера для отмены выполнения."""
+
+    def test_with_number(self):
+        assert _extract_uncomplete_number("отменить выполнение 1") == 1
+        assert _extract_uncomplete_number("вернуть задачу номер 2") == 2
+
+    def test_no_number(self):
+        assert _extract_uncomplete_number("отменить выполнение") is None

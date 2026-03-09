@@ -20,6 +20,10 @@ from task_parsing import (
     starts_with_done_marker,
     extract_done_target,
     clean_task_text_from_datetime,
+    starts_with_edit_marker,
+    extract_edit_target,
+    starts_with_reschedule_marker,
+    extract_reschedule_target,
 )
 
 
@@ -230,3 +234,67 @@ class TestExtractDoneTarget:
             None,
             "купить молоко",
         )
+
+
+class TestStartsWithEditMarker:
+    """Маркеры изменения задачи."""
+
+    def test_yes(self):
+        assert starts_with_edit_marker("Изменить задачу 2 на Купить хлеб") is True
+        assert starts_with_edit_marker("исправить задачу купить молоко на купить хлеб") is True
+        assert starts_with_edit_marker("переименовать задачу 1 на Новая формулировка") is True
+
+    def test_no(self):
+        assert starts_with_edit_marker("купить молоко") is False
+        assert starts_with_edit_marker("отметь 2") is False
+
+
+class TestExtractEditTarget:
+    """Извлечение номера/названия и нового текста для изменения задачи."""
+
+    def test_by_number(self):
+        num, search, new = extract_edit_target("Изменить задачу 2 на Купить хлеб")
+        assert num == 2
+        assert search is None
+        assert new == "Купить хлеб"
+
+    def test_by_name(self):
+        num, search, new = extract_edit_target("исправить задачу купить молоко на купить хлеб")
+        assert num is None
+        assert search == "купить молоко"
+        assert new == "купить хлеб"
+
+    def test_no_on_returns_empty(self):
+        num, search, new = extract_edit_target("изменить задачу 2")
+        assert new == ""
+
+
+class TestStartsWithRescheduleMarker:
+    """Маркеры переноса задачи."""
+
+    def test_yes(self):
+        assert starts_with_reschedule_marker("Перенеси задачу 3 на завтра") is True
+        assert starts_with_reschedule_marker("перенести на пятницу") is True
+
+    def test_no(self):
+        assert starts_with_reschedule_marker("купить молоко завтра") is False
+
+
+class TestExtractRescheduleTarget:
+    """Извлечение номера задачи и даты/времени для переноса."""
+
+    def test_number_and_tomorrow(self):
+        num, search, due_date, due_time = extract_reschedule_target(
+            "перенеси задачу 3 на завтра", today=MONDAY
+        )
+        assert num == 3
+        assert search is None
+        assert due_date == "2026-03-03"
+        assert due_time is None
+
+    def test_number_and_weekday(self):
+        num, search, due_date, due_time = extract_reschedule_target(
+            "перенести задачу 1 на пятницу", today=MONDAY
+        )
+        assert num == 1
+        assert due_date == "2026-03-06"

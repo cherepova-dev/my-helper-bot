@@ -115,6 +115,7 @@ def _init_tables_pg() -> None:
     for col_sql in (
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
         "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
+        "ALTER TABLE tasks ADD COLUMN last_completed_at TIMESTAMPTZ",
     ):
         try:
             cur.execute(col_sql)
@@ -174,6 +175,7 @@ def _init_tables_sqlite() -> None:
     for col_sql in (
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
         "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
+        "ALTER TABLE tasks ADD COLUMN last_completed_at TEXT",
     ):
         try:
             _conn.execute(col_sql)
@@ -601,19 +603,56 @@ def get_today_tasks(user_id: int) -> list[dict]:
     return result
 
 
-def complete_task(task_id: int, user_id: int | None = None) -> bool:
+def complete_task(task_id: int, user_id: int | None = None, task: dict | None = None) -> bool:
+    """
+    Отмечает задачу выполненной.
+    Для рутины (is_routine): ставит last_completed_at, status остаётся 'active' — рутина снова появится в свой день.
+    Для обычной задачи: status='done', completed_at=now.
+    """
     now = datetime.now(timezone.utc).isoformat()
-    if user_id is not None:
-        n = _execute(
-            "UPDATE tasks SET status = 'done', completed_at = %s WHERE id = %s AND user_id = %s AND status = 'active'",
-            (now, task_id, user_id),
-        )
+    if task is None and user_id is not None:
+        task = _fetchone("SELECT id, is_routine FROM tasks WHERE id = %s AND user_id = %s", (task_id, user_id))
+    is_routine = task and task.get("is_routine")
+    if is_routine:
+        if user_id is not None:
+            n = _execute(
+                "UPDATE tasks SET last_completed_at = %s WHERE id = %s AND user_id = %s AND status = 'active'",
+                (now, task_id, user_id),
+            )
+        else:
+            n = _execute(
+                "UPDATE tasks SET last_completed_at = %s WHERE id = %s AND status = 'active'",
+                (now, task_id),
+            )
     else:
+        if user_id is not None:
+            n = _execute(
+                "UPDATE tasks SET status = 'done', completed_at = %s WHERE id = %s AND user_id = %s AND status = 'active'",
+                (now, task_id, user_id),
+            )
+        else:
+            n = _execute(
+                "UPDATE tasks SET status = 'done', completed_at = %s WHERE id = %s AND status = 'active'",
+                (now, task_id),
+            )
+    logger.info("complete_task: task_id=%s user_id=%s is_routine=%s rows_updated=%s", task_id, user_id, is_routine, n)
+    return n > 0
+
+
+def uncomplete_task(task_id: int, user_id: int) -> bool:
+    """Отменяет выполнение задачи: status='active', completed_at и last_completed_at очищаются."""
+    n = _execute(
+        "UPDATE tasks SET status = 'active', completed_at = NULL, last_completed_at = NULL "
+        "WHERE id = %s AND user_id = %s AND status = 'done'",
+        (task_id, user_id),
+    )
+    if n == 0:
         n = _execute(
-            "UPDATE tasks SET status = 'done', completed_at = %s WHERE id = %s AND status = 'active'",
-            (now, task_id),
+            "UPDATE tasks SET last_completed_at = NULL "
+            "WHERE id = %s AND user_id = %s AND status = 'active' AND is_routine = TRUE AND last_completed_at IS NOT NULL",
+            (task_id, user_id),
         )
-    logger.info("complete_task: task_id=%s user_id=%s rows_updated=%s", task_id, user_id, n)
+    logger.info("uncomplete_task: task_id=%s user_id=%s rows_updated=%s", task_id, user_id, n)
     return n > 0
 
 
@@ -644,16 +683,29 @@ def find_tasks_by_texts(user_id: int, searches: list[str]) -> list[dict]:
 
 
 def get_done_tasks(user_id: int, days: int = 7) -> list[dict]:
+    """Выполненные за последние days дней: обычные (status=done) и рутины (last_completed_at)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return _fetchall(
+    done = _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'done' "
         "AND completed_at >= %s ORDER BY completed_at DESC",
         (user_id, cutoff),
     )
+    routines_done = _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' AND is_routine = TRUE "
+        "AND last_completed_at >= %s ORDER BY last_completed_at DESC",
+        (user_id, cutoff),
+    )
+    for t in routines_done:
+        t["_use_completed_at"] = t.get("last_completed_at")
+    for t in done:
+        t["_use_completed_at"] = t.get("completed_at")
+    merged = list(done) + list(routines_done)
+    merged.sort(key=lambda x: (x.get("_use_completed_at") or ""), reverse=True)
+    return merged
 
 
 def get_done_tasks_today(user_id: int) -> list[dict]:
-    """Выполненные задачи за сегодня (по календарному дню в часовом поясе пользователя)."""
+    """Выполненные задачи за сегодня: обычные (status=done) и рутины (last_completed_at сегодня)."""
     today_str, _ = _get_today_in_user_tz(user_id)
     row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
     tz_name = (row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
@@ -673,11 +725,23 @@ def get_done_tasks_today(user_id: int) -> list[dict]:
         start_utc = today_str + "T00:00:00+00:00"
         end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
         end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
-    return _fetchall(
+    done = _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'done' "
         "AND completed_at >= %s AND completed_at < %s ORDER BY completed_at DESC",
         (user_id, start_utc, end_utc),
     )
+    routines_today = _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' AND is_routine = TRUE "
+        "AND last_completed_at >= %s AND last_completed_at < %s ORDER BY last_completed_at DESC",
+        (user_id, start_utc, end_utc),
+    )
+    for t in done:
+        t["_use_completed_at"] = t.get("completed_at")
+    for t in routines_today:
+        t["_use_completed_at"] = t.get("last_completed_at")
+    merged = list(done) + list(routines_today)
+    merged.sort(key=lambda x: (x.get("_use_completed_at") or ""), reverse=True)
+    return merged
 
 
 def get_tasks_by_category(user_id: int, category_name: str) -> list[dict]:

@@ -17,7 +17,8 @@ ADD_PREFIXES_LOWER = [p.lower() for p in ADD_PREFIXES]
 DONE_PREFIXES = (
     "отметь", "отметить", "выполни", "выполнить", "сделай", "сделать",
     "заверши", "завершить", "отметь задачу", "выполни задачу",
-    "отметить задачу", "выполнить задачу", "сделано", "готово",
+    "отметить задачу", "выполнить задачу", "отметить задачу номер", "отметить выполнение",
+    "сделано", "готово",
 )
 DONE_PREFIXES_LOWER = [p.lower() for p in sorted(DONE_PREFIXES, key=len, reverse=True)]
 
@@ -29,8 +30,96 @@ DONE_FILLER_PHRASES = (
     "как выполненную", "как выполненной",
     "выполненную", "выполненной",
     "задачу номер", "задачу #", "номер",
+    "выполнение ",
 )
 DONE_FILLER_LOWER = [p.lower() for p in sorted(DONE_FILLER_PHRASES, key=len, reverse=True)]
+
+# Маркеры «изменить задачу» / «исправить» — изменение текста задачи
+EDIT_PREFIXES = (
+    "изменить задачу", "исправить задачу", "переименовать задачу",
+    "изменить", "исправить", "переименовать",
+)
+EDIT_PREFIXES_LOWER = [p.lower() for p in sorted(EDIT_PREFIXES, key=len, reverse=True)]
+
+# Маркеры «перенести задачу N на дату» — перенос по дате/времени
+RESCHEDULE_PREFIXES = (
+    "перенести задачу", "перенеси задачу", "переложи задачу",
+    "перенести", "перенеси", "переложи",
+)
+RESCHEDULE_PREFIXES_LOWER = [p.lower() for p in sorted(RESCHEDULE_PREFIXES, key=len, reverse=True)]
+
+
+def starts_with_edit_marker(text: str) -> bool:
+    """True, если текст начинается с маркера изменения задачи."""
+    lower = (text or "").strip().lower()
+    return any(lower.startswith(p) for p in EDIT_PREFIXES_LOWER)
+
+
+def extract_edit_target(text: str) -> tuple[int | None, str | None, str]:
+    """
+    После маркера «изменить задачу» извлекает идентификатор (номер или текст для поиска) и новый текст.
+    Формат: «изменить задачу 2 на Купить хлеб» или «исправить купить молоко на купить хлеб».
+    Возвращает (num_or_none, search_text_or_none, new_text). new_text не пустой только если есть « на ».
+    """
+    t = (text or "").strip()
+    lower = t.lower()
+    rest = ""
+    for prefix in EDIT_PREFIXES_LOWER:
+        if lower.startswith(prefix):
+            rest = t[len(prefix):].strip()
+            rest = re.sub(r"^(?:задач[уа]\.?\s*)?", "", rest, flags=re.IGNORECASE).strip()
+            rest = re.sub(r"^[.,;:\s]+", "", rest).strip()
+            break
+    if not rest:
+        return None, None, ""
+    if " на " not in rest and " на " not in rest.lower():
+        return None, None, ""
+    parts = re.split(r"\s+на\s+", rest, maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) != 2:
+        return None, None, ""
+    identifier, new_text = parts[0].strip(), parts[1].strip()
+    if not identifier or not new_text:
+        return None, None, ""
+    m = re.match(r"^(\d+)\s*$", identifier)
+    if m:
+        return int(m.group(1)), None, new_text
+    return None, identifier, new_text
+
+
+def starts_with_reschedule_marker(text: str) -> bool:
+    """True, если текст начинается с маркера переноса задачи."""
+    lower = (text or "").strip().lower()
+    return any(lower.startswith(p) for p in RESCHEDULE_PREFIXES_LOWER)
+
+
+def extract_reschedule_target(text: str, today: datetime | None = None) -> tuple[int | None, str | None, str | None, str | None]:
+    """
+    После маркера «перенеси задачу» извлекает номер/название задачи и новую дату/время.
+    Возвращает (num_or_none, search_text_or_none, due_date, due_time).
+    """
+    t = (text or "").strip()
+    lower = t.lower()
+    rest = ""
+    for prefix in RESCHEDULE_PREFIXES_LOWER:
+        if lower.startswith(prefix):
+            rest = t[len(prefix):].strip()
+            rest = re.sub(r"^(?:задач[уа]\.?\s*)?(?:номер\s*)?", "", rest, flags=re.IGNORECASE).strip()
+            rest = re.sub(r"^[.,;:\s]+", "", rest).strip()
+            break
+    if not rest or " на " not in rest.replace("\n", " "):
+        return None, None, None, None
+    parts = re.split(r"\s+на\s+", rest, maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) != 2:
+        return None, None, None, None
+    identifier, date_time_part = parts[0].strip(), parts[1].strip()
+    if not identifier or not date_time_part:
+        return None, None, None, None
+    due_date = parse_due_date(date_time_part, today=today)
+    due_time = parse_due_time(date_time_part)
+    m = re.match(r"^(\d+)\s*$", identifier)
+    if m:
+        return int(m.group(1)), None, due_date, due_time
+    return None, identifier, due_date, due_time
 
 
 def parse_due_date(text: str, today: datetime | None = None) -> str | None:
@@ -220,3 +309,50 @@ def clean_task_text_from_datetime(text: str) -> str:
 
     s = re.sub(r"\s+", " ", s).strip().strip(".,;:")
     return s if s else text.strip()
+
+
+# Нормализация формулировки задачи к повелительному наклонению / инфинитиву для отображения в списке
+# («Заправлять постели» -> «Заправить постель»)
+VERB_TO_DISPLAY = {
+    "заправлять": "заправить", "заправляю": "заправить", "заправляй": "заправить",
+    "поливать": "полить", "поливаю": "полить", "поливай": "полить",
+    "мыть": "помыть", "мой": "помыть", "помыть": "помыть",
+    "убирать": "убрать", "убираю": "убрать", "убирай": "убрать",
+    "готовить": "приготовить", "готовь": "приготовить", "приготовить": "приготовить",
+    "звонить": "позвонить", "звоню": "позвонить", "позвонить": "позвонить",
+    "писать": "написать", "пиши": "написать", "написать": "написать",
+    "делать": "сделать", "делай": "сделать", "сделать": "сделать",
+    "купить": "купить", "покупать": "купить", "покупай": "купить",
+    "проветривать": "проветрить", "проветривай": "проветрить", "проветрить": "проветрить",
+}
+PLURAL_TO_SINGULAR = {
+    "постели": "постель", "постелей": "постель",
+    "цветы": "цветы", "цветов": "цветы",  # оставляем как есть или "цветы"
+    "посуду": "посуда", "посуда": "посуда",
+}
+
+
+def normalize_task_display(text: str) -> str:
+    """
+    Приводит формулировку задачи к виду для отображения в списке:
+    повелительное наклонение / инфинитив, единственное число где уместно.
+    «Заправлять постели ежедневно» -> «Заправить постель».
+    """
+    if not text or not text.strip():
+        return text
+    s = text.strip()
+    lower = s.lower()
+    words = s.split()
+    out = []
+    for w in words:
+        w_lower = w.lower()
+        if w_lower in VERB_TO_DISPLAY:
+            out.append(VERB_TO_DISPLAY[w_lower])
+        elif w_lower in PLURAL_TO_SINGULAR:
+            out.append(PLURAL_TO_SINGULAR[w_lower])
+        else:
+            out.append(w)
+    result = " ".join(out)
+    if result and result[0].isalpha():
+        result = result[0].upper() + result[1:]
+    return result.strip() if result.strip() else text.strip()
