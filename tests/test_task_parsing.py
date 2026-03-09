@@ -24,6 +24,8 @@ from task_parsing import (
     extract_edit_target,
     starts_with_reschedule_marker,
     extract_reschedule_target,
+    starts_with_delete_marker,
+    extract_delete_target,
 )
 
 
@@ -298,3 +300,28 @@ class TestExtractRescheduleTarget:
         )
         assert num == 1
         assert due_date == "2026-03-06"
+
+
+class TestStartsWithDeleteMarker:
+    """Маркеры удаления задачи/рутины."""
+
+    def test_yes(self):
+        assert starts_with_delete_marker("Удали задачу 3") is True
+        assert starts_with_delete_marker("удалить рутину 2") is True
+
+    def test_no(self):
+        assert starts_with_delete_marker("добавь задачу") is False
+
+
+class TestExtractDeleteTarget:
+    """Извлечение номера и типа (задача/рутина) для удаления."""
+
+    def test_task_number(self):
+        num, is_routine = extract_delete_target("удали задачу 3")
+        assert num == 3
+        assert is_routine is False
+
+    def test_routine_number(self):
+        num, is_routine = extract_delete_target("удали рутину 2")
+        assert num == 2
+        assert is_routine is True

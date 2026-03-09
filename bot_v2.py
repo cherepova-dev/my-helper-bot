@@ -43,6 +43,8 @@ from task_parsing import (
     extract_edit_target,
     starts_with_reschedule_marker,
     extract_reschedule_target,
+    starts_with_delete_marker,
+    extract_delete_target,
 )
 
 # Алиасы для использования в _save_one_task_and_reply
@@ -480,22 +482,36 @@ _REPORT_CATEGORY_ORDER = [
 
 
 def _parse_completed_at(completed_at_str, tz_name: str = "Europe/Moscow"):
-    """Парсит completed_at (ISO) и возвращает datetime в TZ пользователя."""
+    """Парсит completed_at (ISO, дата-время с пробелом или только YYYY-MM-DD) и возвращает datetime в TZ пользователя."""
     if not completed_at_str:
         return None
     try:
-        if isinstance(completed_at_str, str) and "T" in completed_at_str:
-            dt = datetime.fromisoformat(completed_at_str.replace("Z", "+00:00"))
-        else:
+        if not isinstance(completed_at_str, str):
             return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        if ZoneInfo:
-            tz = ZoneInfo(tz_name)
-            return dt.astimezone(tz)
-        return dt
+        s = completed_at_str.strip().replace("Z", "+00:00")
+        if "T" not in s and " " in s:
+            s = s.replace(" ", "T", 1)
+        if "T" in s:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if ZoneInfo:
+                tz = ZoneInfo(tz_name)
+                return dt.astimezone(tz)
+            return dt
+        if len(s) >= 10 and s[:10].replace("-", "").isdigit():
+            from datetime import date as _date
+            d = _date.fromisoformat(s[:10])
+            if ZoneInfo:
+                try:
+                    tz = ZoneInfo(tz_name)
+                    return datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=tz)
+                except Exception:
+                    return datetime.combine(d, datetime.min.time())
+            return datetime.combine(d, datetime.min.time())
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _format_completed_time(dt) -> str:
@@ -857,6 +873,35 @@ async def _handle_reschedule(update: Update, user_row: dict, text: str) -> None:
         await _reply(update, "Не удалось перенести задачу.")
 
 
+async def _handle_delete(update: Update, user_row: dict, text: str) -> None:
+    """Удаление задачи или рутины по номеру: «Удали задачу 3», «Удали рутину 2»."""
+    uid = user_row["id"]
+    num, is_routine = extract_delete_target(text)
+    if num is None:
+        if is_routine:
+            await _reply(update, "Напиши номер рутины для удаления, например: _Удали рутину 2_. Список: /routines")
+        else:
+            await _reply(update, "Напиши номер задачи для удаления, например: _Удали задачу 3_. Номера — в списке задач.")
+        return
+    if is_routine:
+        tasks = db.get_routine_tasks(uid)
+        list_name = "рутин"
+    else:
+        tasks = _active_tasks_display_order(uid)
+        list_name = "задач"
+    if not tasks:
+        await _reply(update, f"Нет {list_name} для удаления.")
+        return
+    if 1 <= num <= len(tasks):
+        task = tasks[num - 1]
+        if db.delete_task(task["id"], uid):
+            await _reply(update, f"🗑 Удалено: «{task.get('text', '')}»")
+        else:
+            await _reply(update, "Не удалось удалить.")
+    else:
+        await _reply(update, f"Нет {list_name} с номером {num}. В списке от 1 до {len(tasks)}.")
+
+
 def _match_synonym(text: str, phrases: tuple[str, ...]) -> bool:
     """True, если текст (нижний регистр) совпадает с фразой или содержит её."""
     lower = text.strip().lower()
@@ -933,6 +978,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if _match_synonym(text, SYN_ADD_TASK):
         _awaiting_task[user.id] = True
         await _reply(update, "Напиши или надиктуй задачу — *следующее* сообщение я сохраню как задачу.")
+        return
+
+    # Удалить задачу/рутину по номеру: «Удали задачу 3», «Удали рутину 2»
+    if starts_with_delete_marker(text):
+        await _handle_delete(update, user_row, text)
         return
 
     # Изменить задачу: «Изменить задачу 2 на Купить хлеб»
@@ -1040,6 +1090,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if _match_synonym(text, SYN_ADD_TASK):
         _awaiting_task[user.id] = True
         await _reply(update, "Напиши или надиктуй задачу — *следующее* сообщение я сохраню как задачу.")
+        return
+
+    if starts_with_delete_marker(text):
+        await _handle_delete(update, user_row, text)
         return
 
     if starts_with_edit_marker(text):

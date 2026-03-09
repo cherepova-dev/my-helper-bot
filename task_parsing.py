@@ -48,6 +48,43 @@ RESCHEDULE_PREFIXES = (
 )
 RESCHEDULE_PREFIXES_LOWER = [p.lower() for p in sorted(RESCHEDULE_PREFIXES, key=len, reverse=True)]
 
+# Маркеры «удали задачу N» / «удали рутину N»
+DELETE_PREFIXES = (
+    "удали рутину", "удалить рутину",
+    "удали задачу", "удалить задачу",
+    "удали", "удалить",
+)
+DELETE_PREFIXES_LOWER = [p.lower() for p in sorted(DELETE_PREFIXES, key=len, reverse=True)]
+
+
+def starts_with_delete_marker(text: str) -> bool:
+    """True, если текст начинается с маркера удаления задачи/рутины."""
+    lower = (text or "").strip().lower()
+    return any(lower.startswith(p) for p in DELETE_PREFIXES_LOWER)
+
+
+def extract_delete_target(text: str) -> tuple[int | None, bool]:
+    """
+    После маркера «удали задачу» / «удали рутину» извлекает номер (1-based).
+    Возвращает (num_or_none, is_routine). is_routine=True если в фразе «рутину».
+    """
+    t = (text or "").strip()
+    lower = t.lower()
+    rest = ""
+    is_routine = False
+    for prefix in DELETE_PREFIXES_LOWER:
+        if lower.startswith(prefix):
+            rest = t[len(prefix):].strip()
+            is_routine = "рутину" in prefix
+            rest = re.sub(r"^(?:задач[уа]\.?\s*|рутину\s*|номер\s*)?", "", rest, flags=re.IGNORECASE).strip()
+            break
+    if not rest:
+        return None, is_routine
+    m = re.match(r"^(\d+)\s*", rest)
+    if m:
+        return int(m.group(1)), is_routine
+    return None, is_routine
+
 
 def starts_with_edit_marker(text: str) -> bool:
     """True, если текст начинается с маркера изменения задачи."""
