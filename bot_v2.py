@@ -71,6 +71,7 @@ _awaiting_done: dict[int, bool] = {}
 
 BOT_COMMANDS = [
     ("start", "Начать"),
+    ("help", "Помощь"),
     ("add", "Добавить задачу"),
     ("tasks", "Список задач"),
     ("today", "План на сегодня"),
@@ -79,6 +80,35 @@ BOT_COMMANDS = [
     ("done_today", "Сделано сегодня"),
     ("done_week", "Сделано за неделю"),
 ]
+
+# Краткая справка по голосовым и текстовым командам (команда «Помощь»)
+HELP_TEXT = (
+    "📖 *Помощь по командам*\n\n"
+    "*Как добавить задачу*\n"
+    "• Нажми «Добавить задачу» и отправь текст следующим сообщением\n"
+    "• Или напиши/скажи: «Добавь [задача]», «Создай [задача]», «Запиши [задача]»\n"
+    "• Рутины: «Ежедневная зарядка», «Поливать цветы каждый четверг», «Уборка раз в неделю»\n\n"
+    "*Как выполнить задачу*\n"
+    "• «Отметь 3» или «Выполни 3» — по номеру из списка\n"
+    "• «Выполни купить молоко» — по названию\n"
+    "• «Отметить задачу номер 1», «Отметить выполнение 2»\n\n"
+    "*Как выполнить рутину*\n"
+    "• Так же, как задачу: «Отметь N» по номеру в плане на сегодня. После выполнения рутина исчезнет из списка на сегодня и снова появится в свой день.\n\n"
+    "*Как удалить задачу или рутину*\n"
+    "• «Удали задачу 3» — удалить задачу №3 из общего списка\n"
+    "• «Удали рутину 2» — удалить рутину №2 (номера в разделе «Рутины»)\n\n"
+    "*Как изменить задачу*\n"
+    "• «Изменить задачу 2 на Купить хлеб» — новый текст\n"
+    "• «Исправить купить молоко на Купить хлеб»\n\n"
+    "*Как перенести задачу*\n"
+    "• «Перенеси задачу 3 на завтра», «Перенести задачу 1 на пятницу в 10:00»\n"
+    "• Для рутины — перенос на другой день недели\n\n"
+    "*Отменить выполнение*\n"
+    "• «Отменить выполнение 1» — вернуть задачу из «Сделано сегодня» в активные\n\n"
+    "*Списки и отчёты*\n"
+    "• «Список задач», «План на сегодня», «Рутины»\n"
+    "• «Сделано сегодня», «Сделано за неделю», «Отчёт за неделю»"
+)
 
 # Синонимы для текстовых/голосовых команд (без слэша)
 SYN_LIST_TASKS = (
@@ -109,6 +139,10 @@ SYN_ROUTINES = (
 SYN_UNCOMPLETE = (
     "отменить выполнение", "вернуть задачу", "отменить выполнение задачи",
     "вернуть в список", "отменить выполнение задачи номер",
+)
+SYN_HELP = (
+    "помощь", "справка", "как пользоваться", "что умеешь", "команды",
+    "покажи помощь", "покажи справку",
 )
 # Изменение и перенос — маркеры в task_parsing (изменить задачу, перенеси на ...)
 # SYN_EDIT / SYN_RESCHEDULE не нужны: проверяем starts_with_edit_marker, starts_with_reschedule_marker
@@ -372,6 +406,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _awaiting_task.pop(user.id, None)
     _awaiting_done.pop(user.id, None)
     await _reply(update, ONBOARDING_V2)
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Краткая справка по командам (голос и текст)."""
+    await _reply(update, HELP_TEXT)
 
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -933,6 +972,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _save_one_task_and_reply(update, user_row, text)
         return
 
+    # Синонимы: помощь
+    if _match_synonym(text, SYN_HELP):
+        await cmd_help(update, context)
+        return
+
     # Синонимы: список задач
     if _match_synonym(text, SYN_LIST_TASKS):
         uid = user_row["id"]
@@ -1051,6 +1095,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await _save_one_task_and_reply(update, user_row, text)
         return
 
+    if _match_synonym(text, SYN_HELP):
+        await cmd_help(update, context)
+        return
+
     if _match_synonym(text, SYN_LIST_TASKS):
         uid = user_row["id"]
         db.transfer_overdue_tasks(uid)
@@ -1163,6 +1211,7 @@ def main() -> None:
     app = builder.post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("tasks", cmd_tasks))
     app.add_handler(CommandHandler("today", cmd_today))

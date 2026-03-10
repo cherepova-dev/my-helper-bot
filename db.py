@@ -585,8 +585,26 @@ def _routine_matches_today(task: dict, today_weekday: int) -> bool:
 
 
 def get_today_tasks(user_id: int) -> list[dict]:
-    """Задачи на сегодня: дата считается в часовом поясе пользователя; рутины — только по repeat_day."""
+    """Задачи на сегодня: дата в ЧП пользователя; рутины по repeat_day; рутины, уже выполненные сегодня, не показываем."""
     today_str, today_weekday = _get_today_in_user_tz(user_id)
+    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
+    tz_name = (row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+    if ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+            y, m, d = map(int, today_str.split("-"))
+            start = datetime(y, m, d, 0, 0, 0, tzinfo=tz)
+            end = start + timedelta(days=1)
+            start_utc = start.astimezone(timezone.utc).isoformat()
+            end_utc = end.astimezone(timezone.utc).isoformat()
+        except Exception:
+            start_utc = today_str + "T00:00:00+00:00"
+            end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
+            end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
+    else:
+        start_utc = today_str + "T00:00:00+00:00"
+        end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
+        end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
     rows = _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
         "AND (due_date = %s OR due_date IS NULL) "
@@ -596,8 +614,16 @@ def get_today_tasks(user_id: int) -> list[dict]:
     result = []
     for t in rows:
         if t.get("is_routine"):
-            if _routine_matches_today(t, today_weekday):
-                result.append(t)
+            if not _routine_matches_today(t, today_weekday):
+                continue
+            lc = t.get("last_completed_at") or ""
+            if lc:
+                lc_str = (lc if isinstance(lc, str) else str(lc)).strip()
+                if " " in lc_str and "T" not in lc_str:
+                    lc_str = lc_str.replace(" ", "T", 1)
+                if start_utc <= lc_str < end_utc:
+                    continue
+            result.append(t)
         else:
             result.append(t)
     return result
