@@ -1235,6 +1235,18 @@ def main() -> None:
 
     app.add_error_handler(on_error)
     logger.info("Бот v2 запущен (без LLM, только Whisper для голоса).")
+
+    # Python 3.12+: в main thread loop может отсутствовать.
+    # run_polling внутри PTB обращается к текущему loop.
+    try:
+        import asyncio as _a
+        try:
+            _a.get_event_loop()
+        except RuntimeError:
+            _a.set_event_loop(_a.new_event_loop())
+    except Exception:
+        pass
+
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
