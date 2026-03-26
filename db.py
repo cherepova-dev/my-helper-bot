@@ -433,11 +433,21 @@ def get_active_tasks(user_id: int) -> list[dict]:
 
 def get_active_tasks_ordered(user_id: int) -> list[dict]:
     """Активные задачи в порядке для списка: по дате, времени, id (стабильная нумерация)."""
-    rows = _fetchall(
-        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' ORDER BY COALESCE(due_date, '9999-99-99'), COALESCE(due_time, ''), id",
-        (user_id,),
-    )
-    return rows
+    try:
+        # Универсальная сортировка для mixed-схем (TEXT/DATE/TIMESTAMP в старых БД):
+        # сравниваем по текстовому представлению даты, чтобы не падать на несовместимых типах.
+        rows = _fetchall(
+            "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+            "ORDER BY COALESCE(CAST(due_date AS TEXT), '9999-12-31'), COALESCE(CAST(due_time AS TEXT), ''), id",
+            (user_id,),
+        )
+        return rows
+    except Exception as e:
+        logger.warning("get_active_tasks_ordered fallback due to query error: %s", e)
+        return _fetchall(
+            "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' ORDER BY id",
+            (user_id,),
+        )
 
 
 def transfer_overdue_tasks(user_id: int) -> int:
@@ -871,11 +881,15 @@ def get_weekly_stats(user_id: int) -> dict:
 
 
 def get_routine_tasks(user_id: int) -> list[dict]:
-    result = _fetchall(
-        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
-        "AND is_routine = TRUE ORDER BY priority_score DESC",
-        (user_id,),
-    )
+    try:
+        result = _fetchall(
+            "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+            "AND is_routine = TRUE ORDER BY priority_score DESC",
+            (user_id,),
+        )
+    except Exception as e:
+        logger.warning("get_routine_tasks fallback due to query error: %s", e)
+        return []
     logger.info("get_routine_tasks: user=%s found=%d", user_id, len(result))
     if not result:
         all_tasks = _fetchall(
