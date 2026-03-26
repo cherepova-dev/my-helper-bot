@@ -38,6 +38,7 @@ git push origin main
    ```text
    yuliacherepova/my-helper-bot:<полный_sha_коммита>
    ```
+   Актуальный образ: `yuliacherepova/my-helper-bot:6d1d3289c4f43c9dec23553d87bc518d7b1761c8`  
    Пример: `yuliacherepova/my-helper-bot:d39875ffede09b46f795e529294c27d41d0c4e66`  
    Либо можно использовать `yuliacherepova/my-helper-bot:latest` (образ от последнего пуша в `main`).
 4. Сохрани настройки и сделай **Restart** приложения.
