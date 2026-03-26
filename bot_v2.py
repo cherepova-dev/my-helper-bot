@@ -1223,15 +1223,39 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Логирует полный traceback и контекст апдейта для быстрой диагностики в проде."""
+        update_type = type(update).__name__
+        user_id = None
+        chat_id = None
+        message_text = None
+        callback_data = None
+        if isinstance(update, Update):
+            if update.effective_user:
+                user_id = update.effective_user.id
+            if update.effective_chat:
+                chat_id = update.effective_chat.id
+            if update.message:
+                message_text = (update.message.text or "").strip()
+            if update.callback_query:
+                callback_data = update.callback_query.data
+
+        logger.exception(
+            "Ошибка обработчика: %s | update_type=%s user_id=%s chat_id=%s text=%r callback=%r",
+            context.error,
+            update_type,
+            user_id,
+            chat_id,
+            message_text,
+            callback_data,
+        )
         if isinstance(context.error, (TimedOut, NetworkError)):
-            logger.warning("Сетевая ошибка: %s", context.error)
-        else:
-            logger.exception("Ошибка: %s", context.error)
-            if isinstance(update, Update) and update.message:
-                try:
-                    await update.message.reply_text("⚠️ Произошла ошибка. Попробуй ещё раз через пару секунд.")
-                except Exception:
-                    pass
+            logger.warning("Сетевая ошибка (будет ретрай/повтор): %s", context.error)
+
+        if isinstance(update, Update) and update.message:
+            try:
+                await update.message.reply_text("⚠️ Произошла ошибка. Попробуй ещё раз через пару секунд.")
+            except Exception:
+                pass
 
     app.add_error_handler(on_error)
     logger.info("Бот v2 запущен (без LLM, только Whisper для голоса).")
