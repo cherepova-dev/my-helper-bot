@@ -10,7 +10,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 import routines
-from routines import ROUTINE_WEEKLY_NO_DAY
+from routines import ROUTINE_WEEKLY_NO_DAY, N_WEEK_PREFIX
+
+
+class TestNTimesPerWeek:
+    def test_parse_words_and_digits(self):
+        assert routines.parse_n_times_per_week("массаж два раза в неделю") == 2
+        assert routines.parse_n_times_per_week("йога 3 раза в неделю") == 3
+
+    def test_is_routine_sets_marker(self):
+        is_r, rep = routines.is_routine_and_repeat("массаж два раза в неделю")
+        assert is_r is True
+        assert rep == f"{N_WEEK_PREFIX}2"
 
 
 class TestIsRoutineAndRepeat:

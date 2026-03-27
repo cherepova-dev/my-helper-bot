@@ -9,6 +9,7 @@ import os
 import random
 import logging
 from datetime import datetime, timezone, timedelta
+from itertools import combinations
 
 try:
     from zoneinfo import ZoneInfo
@@ -401,8 +402,16 @@ def add_task(
 ) -> dict:
     logger.info("add_task: text='%s' is_routine=%s repeat_day=%s due_date=%s",
                 text[:40], is_routine, repeat_day, due_date)
+    # «N раз в неделю» — равномерные интервалы + разгрузка по загруженным дням
+    if is_routine and repeat_day and str(repeat_day).strip().startswith(N_WEEK_PREFIX):
+        try:
+            nc = int(str(repeat_day).split(":", 1)[1])
+        except (ValueError, IndexError):
+            nc = 2
+        repeat_day = compute_n_week_repeat_days(user_id, nc)
+        logger.info("add_task: N_WEEK assigned weekdays: %s", repeat_day)
     # US-RT7: если рутина «раз в неделю» без дня — назначаем случайный день
-    if is_routine and repeat_day and repeat_day.strip().lower() == ROUTINE_WEEKLY_NO_DAY:
+    elif is_routine and repeat_day and repeat_day.strip().lower() == ROUTINE_WEEKLY_NO_DAY:
         repeat_day = random.choice(_ROUTINE_DAY_CODES)
         logger.info("add_task: assigned random weekday for weekly routine: %s", repeat_day)
     score = _calc_score(priority_value, priority_urgency, priority_risk, priority_size)
@@ -549,7 +558,55 @@ _ROUTINE_DAY_MAP = {
 
 # Маркер «раз в неделю» без дня — при сохранении подставляется случайный день (US-RT7)
 ROUTINE_WEEKLY_NO_DAY = "раз в неделю"
+N_WEEK_PREFIX = "N_WEEK:"
 _ROUTINE_DAY_CODES = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+
+def routine_weekday_load(user_id: int) -> dict[str, int]:
+    """Сколько рутин (слотов) приходится на каждый день пн..вс (для разгрузки при «N раз в неделю»)."""
+    load = {c: 0 for c in _ROUTINE_DAY_CODES}
+    rows = get_routine_tasks(user_id)
+    for r in rows:
+        rd = (r.get("repeat_day") or "").strip().lower()
+        if not rd:
+            continue
+        if rd == "ежедневно":
+            for c in _ROUTINE_DAY_CODES:
+                load[c] += 1
+            continue
+        for part in rd.split(","):
+            p = part.strip()
+            if p in load:
+                load[p] += 1
+    return load
+
+
+def compute_n_week_repeat_days(user_id: int, n: int) -> str:
+    """Подбирает n различных дней недели: равномерный шаг по кругу + меньше загрузки (существующие рутины)."""
+    n = max(1, min(7, int(n)))
+    load = routine_weekday_load(user_id)
+    codes = list(_ROUTINE_DAY_CODES)
+    best_combo: tuple[int, ...] | None = None
+    best_score = 1e18
+    for combo in combinations(range(7), n):
+        sorted_i = sorted(combo)
+        gaps = []
+        for idx in range(n):
+            a = sorted_i[idx]
+            b = sorted_i[(idx + 1) % n]
+            diff = (b - a) % 7
+            if diff == 0:
+                diff = 7
+            gaps.append(diff)
+        avg = 7.0 / n
+        variance = sum((g - avg) ** 2 for g in gaps)
+        lsum = sum(load[codes[i]] for i in combo)
+        score = variance * 100.0 + lsum
+        if score < best_score:
+            best_score = score
+            best_combo = combo
+    assert best_combo is not None
+    return ",".join(codes[i] for i in sorted(best_combo))
 
 # Человекочитаемые названия дней для отображения
 _REPEAT_DAY_DISPLAY = {

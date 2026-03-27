@@ -21,6 +21,14 @@ WEEKDAY_NAMES_TO_CODE = {
 
 # Значение-маркер: «раз в неделю» без указания дня — в db подставится случайный день
 ROUTINE_WEEKLY_NO_DAY = "раз в неделю"
+# Маркер для db.add_task: «N раз в неделю» без дней — подбор дней по загрузке (см. compute_n_week_repeat_days)
+N_WEEK_PREFIX = "N_WEEK:"
+
+# Число раз в неделю словами → число
+_WORD_TO_N_TIMES = {
+    "два": 2, "две": 2, "три": 3, "четыре": 4, "четырех": 4,
+    "пять": 5, "пятью": 5, "шесть": 6, "семь": 7,
+}
 
 # Триггеры ежедневности
 TRIGGERS_DAILY = (
@@ -101,6 +109,21 @@ def parse_multiple_weekdays(text: str) -> list[str] | None:
     return unique if unique else None
 
 
+def parse_n_times_per_week(text: str) -> int | None:
+    """
+    «два раза в неделю», «3 раза в неделю», «2 раза в неделю» → 2..7.
+    """
+    lower = _normalize(text)
+    m = re.search(r"(\d+)\s*раза?\s*в\s*недел", lower)
+    if m:
+        v = int(m.group(1))
+        return max(1, min(7, v))
+    for word, n in sorted(_WORD_TO_N_TIMES.items(), key=len, reverse=True):
+        if re.search(rf"{re.escape(word)}\s+раза?\s*в\s*недел", lower):
+            return n
+    return None
+
+
 def parse_repeat_from_text(text: str) -> str | None:
     """
     Парсит регулярность из текста рутины (после определения, что это рутина).
@@ -147,6 +170,11 @@ def is_routine_and_repeat(task_text: str) -> tuple[bool, str | None]:
     if day:
         return True, day
 
+    # 3b) «N раз в неделю» без конкретных дней — дни подберёт БД по равномерности и загрузке
+    n_times = parse_n_times_per_week(task_text)
+    if n_times is not None:
+        return True, f"{N_WEEK_PREFIX}{n_times}"
+
     # 4) Еженедельно без дня
     if any(kw in text for kw in TRIGGERS_WEEKLY_GENERIC):
         return True, ROUTINE_WEEKLY_NO_DAY
@@ -181,6 +209,15 @@ def clean_task_title_from_routine_phrases(text: str) -> str:
         s = re.sub(rf"\s*{re.escape(phrase)}\s*", " ", s, flags=re.IGNORECASE)
     for phrase in ("еженедельно", "еженедельная", "раз в неделю", "каждую неделю"):
         s = re.sub(rf"\s*{re.escape(phrase)}\s*", " ", s, flags=re.IGNORECASE)
+    s = re.sub(
+        r"\s*\d+\s*раза?\s*в\s*неделю\s*",
+        " ",
+        s,
+        flags=re.IGNORECASE,
+    )
+    for w in ("два раза в неделю", "две раза в неделю", "три раза в неделю", "четыре раза в неделю",
+              "пять раз в неделю", "шесть раз в неделю", "семь раз в неделю"):
+        s = re.sub(rf"\s*{re.escape(w)}\s*", " ", s, flags=re.IGNORECASE)
 
     # «записать рутину», «добавить рутину», «рутина:»
     s = re.sub(r"\s*записать\s+рутину\s*:?\s*", " ", s, flags=re.IGNORECASE)

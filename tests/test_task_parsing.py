@@ -19,6 +19,7 @@ from task_parsing import (
     starts_with_add_marker,
     starts_with_done_marker,
     extract_done_target,
+    extract_done_targets,
     clean_task_text_from_datetime,
     starts_with_edit_marker,
     extract_edit_target,
@@ -71,6 +72,19 @@ class TestParseDueDate:
     def test_no_date_returns_none(self):
         assert parse_due_date("просто задача без даты", today=MONDAY) is None
         assert parse_due_date("позвонить", today=MONDAY) is None
+
+    def test_russian_ordinal_april(self):
+        assert parse_due_date("на второе апреля", today=MONDAY) == "2026-04-02"
+        assert parse_due_date("перенос 15 мая", today=MONDAY) == "2026-05-15"
+        assert parse_due_date("2 апреля встреча", today=MONDAY) == "2026-04-02"
+
+    def test_russian_with_year(self):
+        assert parse_due_date("10 марта 2027", today=MONDAY) == "2027-03-10"
+
+    def test_rolls_to_next_year_if_past(self):
+        # 2 марта 2026 — «15 января» без года уже прошло в 2026 → 2027
+        d = datetime(2026, 3, 2, 12, 0, 0)
+        assert parse_due_date("15 января", today=d) == "2027-01-15"
 
 
 class TestParseDueTime:
@@ -204,6 +218,40 @@ class TestStartsWithDoneMarker:
         assert starts_with_done_marker("купить молоко") is False
         assert starts_with_done_marker("добавь задачу") is False
         assert starts_with_done_marker("") is False
+
+
+class TestExtractDoneTargets:
+    """Несколько номеров для отметки выполнения."""
+
+    def test_comma_and_i(self):
+        nums, num, rest = extract_done_targets("Отметь 1, 2 и 3")
+        assert nums == [1, 2, 3]
+        assert num is None
+        assert rest == ""
+
+    def test_space_separated(self):
+        nums, num, rest = extract_done_targets("выполни 1 4 5")
+        assert nums == [1, 4, 5]
+
+    def test_range(self):
+        nums, num, rest = extract_done_targets("отметь 1-3")
+        assert nums == [1, 2, 3]
+
+    def test_single_number_uses_legacy(self):
+        nums, num, rest = extract_done_targets("отметь 5")
+        assert nums is None
+        assert num == 5
+        assert rest == ""
+
+
+class TestExtractRescheduleRussianDate:
+    def test_second_april(self):
+        n, q, dd, tt = extract_reschedule_target(
+            "Перенеси задачу 6 на второе апреля",
+            today=datetime(2026, 3, 2, 12, 0),
+        )
+        assert n == 6
+        assert dd == "2026-04-02"
 
 
 class TestExtractDoneTarget:

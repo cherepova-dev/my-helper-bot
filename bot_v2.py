@@ -37,6 +37,7 @@ from task_parsing import (
     starts_with_add_marker,
     starts_with_done_marker,
     extract_done_target,
+    extract_done_targets,
     clean_task_text_from_datetime,
     normalize_task_display,
     starts_with_edit_marker,
@@ -87,16 +88,18 @@ HELP_TEXT = (
     "*Как добавить задачу*\n"
     "• Нажми «Добавить задачу» и отправь текст следующим сообщением\n"
     "• Или напиши/скажи: «Добавь [задача]», «Создай [задача]», «Запиши [задача]»\n"
-    "• Рутины: «Ежедневная зарядка», «Поливать цветы каждый четверг», «Уборка раз в неделю»\n\n"
+    "• Рутины: «Ежедневная зарядка», «Поливать цветы каждый четверг», «Уборка раз в неделю»\n"
+    "• Несколько раз в неделю без дней: «массаж два раза в неделю», «йога 3 раза в неделю»\n\n"
     "*Как выполнить задачу*\n"
-    "• «Отметь 3» или «Выполни 3» — по номеру из списка\n"
+    "• «Отметь 3» — по *глобальному* номеру в последнем списке «Список задач»\n"
+    "• Несколько сразу: «Отметь 1, 2 и 3», «Выполни 1 4 5», «Отметь 1-3»\n"
     "• «Выполни купить молоко» — по названию\n"
     "• «Отметить задачу номер 1», «Отметить выполнение 2»\n\n"
     "*Как выполнить рутину*\n"
     "• Так же, как задачу: «Отметь N» по номеру в плане на сегодня. После выполнения рутина исчезнет из списка на сегодня и снова появится в свой день.\n\n"
     "*Как удалить задачу или рутину*\n"
-    "• «Удали задачу 3» — удалить задачу №3 из общего списка\n"
-    "• «Удали рутину 2» — удалить рутину №2 (номера в разделе «Рутины»)\n\n"
+    "• «Удали задачу 3» — по *глоб.* номеру из «Список задач»\n"
+    "• «Удали рутину 2» — по номеру в экране «Рутины» (/routines)\n\n"
     "*Как изменить задачу*\n"
     "• «Изменить задачу 2 на Купить хлеб» — новый текст\n"
     "• «Исправить купить молоко на Купить хлеб»\n\n"
@@ -107,7 +110,11 @@ HELP_TEXT = (
     "• «Отменить выполнение 1» — вернуть задачу из «Сделано сегодня» в активные\n\n"
     "*Списки и отчёты*\n"
     "• «Список задач», «План на сегодня», «Рутины»\n"
-    "• «Сделано сегодня», «Сделано за неделю», «Отчёт за неделю»"
+    "• В списке у каждого дня: локальный номер + _(глоб. N)_ — команды «отметь» используют *глоб.* N.\n"
+    "• Номера в старых сообщениях чата не обновляются — ориентируйся на последний список.\n"
+    "• «Сделано сегодня», «Сделано за неделю», «Отчёт за неделю»\n\n"
+    "*Перенос даты*\n"
+    "• «Перенеси задачу 6 на второе апреля», «на 2 апреля», «на 15.05»\n"
 )
 
 # Синонимы для текстовых/голосовых команд (без слэша)
@@ -264,35 +271,44 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
         group = by_date[date_str]
         label = _format_date_human(date_str)
         lines.append(f"*📅 {label}*")
-        for num, t in group:
+        for loc_i, (num, t) in enumerate(group, start=1):
             emoji = t.get("category_emoji") or "📝"
             text = t["text"]
             time_part = ""
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
-            prefix = f"{num}. " if with_numbers else ""
+            if with_numbers:
+                prefix = f"{loc_i}. _(глоб. {num})_ "
+            else:
+                prefix = ""
             lines.append(f"{prefix}{emoji} {text}{time_part}")
         lines.append("")
 
     if "" in by_date:
         lines.append("*📅 Без срока*")
-        for num, t in by_date[""]:
+        for loc_i, (num, t) in enumerate(by_date[""], start=1):
             emoji = t.get("category_emoji") or "📝"
             text = t["text"]
             time_part = ""
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
-            prefix = f"{num}. " if with_numbers else ""
+            if with_numbers:
+                prefix = f"{loc_i}. _(глоб. {num})_ "
+            else:
+                prefix = ""
             lines.append(f"{prefix}{emoji} {text}{time_part}")
         lines.append("")
 
     if routines_list:
         lines.append("*🔁 Рутины*")
-        for num, t in routines_list:
+        for loc_i, (num, t) in enumerate(routines_list, start=1):
             emoji = t.get("category_emoji") or "🔁"
             text = t["text"]
             repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
-            prefix = f"{num}. " if with_numbers else ""
+            if with_numbers:
+                prefix = f"{loc_i}. _(глоб. {num})_ "
+            else:
+                prefix = ""
             lines.append(f"{prefix}{emoji} {text} — _{repeat_label}_")
         lines.append("")
 
@@ -705,17 +721,57 @@ async def _handle_complete(
 ) -> None:
     """Обработка «отметь N» / «выполни название»: по номеру или по тексту, при нескольких — уточнение."""
     uid = user_row["id"]
-    num, rest = extract_done_target(text)
+    nums, num, rest = extract_done_targets(text)
     ordered = _active_tasks_display_order(uid)
     if not ordered:
         await _reply(update, "Нет активных задач для выполнения.")
         return
+
+    if nums:
+        ok_titles: list[str] = []
+        fail_nums: list[int] = []
+        for n in sorted(set(nums)):
+            if 1 <= n <= len(ordered):
+                task = ordered[n - 1]
+                if db.complete_task(task["id"], uid, task=task):
+                    ok_titles.append(task["text"])
+                else:
+                    fail_nums.append(n)
+            else:
+                fail_nums.append(n)
+        parts: list[str] = []
+        if ok_titles:
+            shown = ok_titles[:12]
+            tail = " …" if len(ok_titles) > 12 else ""
+            parts.append(
+                f"🔥 Отмечено ({len(ok_titles)}): "
+                + ", ".join(f"«{t}»" for t in shown)
+                + tail
+            )
+        if fail_nums:
+            parts.append(
+                f"Не получилось для номеров: {', '.join(str(x) for x in sorted(set(fail_nums)))} "
+                f"(в списке 1–{len(ordered)})."
+            )
+        hint = (
+            "\n\n_Команды «отметь» используют глобальный номер _(глоб. N)_ из «Список задач»; "
+            "в чате смотри последний список._"
+        )
+        await _reply(update, "\n".join(parts) + hint)
+        if ok_titles:
+            await _send_remaining_today(update, uid)
+        return
+
     # По номеру
     if num is not None:
         if 1 <= num <= len(ordered):
             task = ordered[num - 1]
             if db.complete_task(task["id"], uid, task=task):
-                await _reply(update, f"🔥 Выполнено: «{task['text']}»")
+                await _reply(
+                    update,
+                    f"🔥 Выполнено: «{task['text']}»\n\n"
+                    "_Номера — по глоб. номеру в последнем «Список задач»._",
+                )
                 await _send_remaining_today(update, uid)
             else:
                 await _reply(update, "Не удалось отметить задачу.")
@@ -750,7 +806,11 @@ async def _handle_complete(
     if len(matches) == 1:
         task = matches[0]
         if db.complete_task(task["id"], uid, task=task):
-            await _reply(update, f"🔥 Выполнено: «{task['text']}»")
+            await _reply(
+                update,
+                f"🔥 Выполнено: «{task['text']}»\n\n"
+                "_Номера — по глоб. номеру в последнем «Список задач»._",
+            )
             await _send_remaining_today(update, uid)
         else:
             await _reply(update, "Не удалось отметить задачу.")

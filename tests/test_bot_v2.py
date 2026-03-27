@@ -132,6 +132,28 @@ class TestFormatTaskList:
         assert "Рутины" in result
         assert "полив цветов" in result
         assert "четверг" in result.lower() or "Четверг" in result
+        assert "глоб." in result
+
+    def test_local_and_global_numbering(self):
+        """В секции по дате — локальный 1, 2 и глобальные номера в скобках."""
+        tasks = [
+            {"id": 1, "text": "a", "category_emoji": "📝", "due_date": "2026-03-05", "due_time": None, "is_routine": False},
+            {"id": 2, "text": "b", "category_emoji": "📝", "due_date": "2026-03-05", "due_time": None, "is_routine": False},
+            {"id": 3, "text": "r", "category_emoji": "🔁", "due_date": None, "due_time": None, "is_routine": True, "repeat_day": "пн"},
+        ]
+        result = _format_task_list(tasks)
+        # Без даты и рутина сортируются перед датой «2026-03-05» → глоб. 1 = рутина.
+        assert "_(глоб. 1)_" in result and "_(глоб. 2)_" in result and "_(глоб. 3)_" in result
+
+    def test_global_numbers_are_contiguous(self):
+        """Глобальные номера в одном ответе бота всегда 1…N без дыр."""
+        tasks = [
+            {"id": i, "text": f"t{i}", "category_emoji": "📝", "due_date": f"2026-03-{i+1:02d}", "due_time": None, "is_routine": False}
+            for i in range(1, 5)
+        ]
+        result = _format_task_list(tasks)
+        for g in range(1, 5):
+            assert f"_(глоб. {g})_" in result
 
 
 class TestBuildConfirmation:
