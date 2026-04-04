@@ -186,6 +186,16 @@ class TestBuildConfirmation:
         assert "Ежедневно" in result
         assert "🔁" in result
 
+    def test_time_of_day_in_confirmation(self):
+        result = _build_confirmation(
+            "Зарядка", None, "рутина", None,
+            is_routine=True,
+            repeat_day="ежедневно",
+            time_of_day="утро",
+        )
+        assert "Время суток" in result
+        assert "утро" in result
+
 
 class TestFormatTodayList:
     """Список на сегодня с нумерацией (_format_today_list). Принимает список пар (номер, задача)."""
@@ -202,6 +212,7 @@ class TestFormatTodayList:
         result = _format_today_list(ordered_today)
         assert "позвонить" in result and "встреча" in result
         assert "2." in result and "5." in result
+        assert "Утро" in result
 
 
 class TestFormatDoneReport:

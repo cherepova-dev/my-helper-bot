@@ -15,6 +15,9 @@ import pytest
 from task_parsing import (
     parse_due_date,
     parse_due_time,
+    infer_time_of_day,
+    time_of_day_from_hour,
+    classify_time_of_day_edit,
     extract_task_text,
     starts_with_add_marker,
     starts_with_done_marker,
@@ -373,3 +376,49 @@ class TestExtractDeleteTarget:
         num, is_routine = extract_delete_target("удали рутину 2")
         assert num == 2
         assert is_routine is True
+
+
+class TestInferTimeOfDay:
+    def test_po_utram(self):
+        assert infer_time_of_day("ежедневная зарядка по утрам") == "утро"
+
+    def test_po_vecheram(self):
+        assert infer_time_of_day("стретчинг по вечерам") == "вечер"
+
+    def test_utrom_vecherom(self):
+        assert infer_time_of_day("позвонить маме утром") == "утро"
+        assert infer_time_of_day("забрать посылку вечером") == "вечер"
+
+    def test_dnem(self):
+        assert infer_time_of_day("съездить за подарком днём") == "день"
+
+    def test_no_false_positive_utra_in_due_time_phrase(self):
+        # «в 7 утра» — только parse_due_time, не период суток в свободной форме
+        assert infer_time_of_day("встать в 7 утра") is None
+
+    def test_time_of_day_from_hour(self):
+        assert time_of_day_from_hour(9) == "утро"
+        assert time_of_day_from_hour(14) == "день"
+        assert time_of_day_from_hour(19) == "вечер"
+
+
+class TestClassifyTimeOfDayEdit:
+    def test_canonical(self):
+        assert classify_time_of_day_edit("вечер") == "вечер"
+        assert classify_time_of_day_edit("на утро") == "утро"
+        assert classify_time_of_day_edit("время суток днём") == "день"
+
+    def test_clear(self):
+        assert classify_time_of_day_edit("без времени суток") == "clear"
+
+    def test_not_title(self):
+        assert classify_time_of_day_edit("Купить хлеб") == "not"
+        assert classify_time_of_day_edit("вечерняя прогулка") == "not"
+
+
+class TestExtractEditTargetRoutine:
+    def test_routine_number_evening(self):
+        num, search, new = extract_edit_target("Изменить рутину 2 на вечер")
+        assert num == 2
+        assert search is None
+        assert new == "вечер"

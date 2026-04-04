@@ -109,6 +109,7 @@ def extract_edit_target(text: str) -> tuple[int | None, str | None, str]:
             break
     if not rest:
         return None, None, ""
+    rest = re.sub(r"^(?:задач[уа]\.?|рутин[уа]\.?)\s*", "", rest, flags=re.IGNORECASE).strip()
     if " на " not in rest and " на " not in rest.lower():
         return None, None, ""
     parts = re.split(r"\s+на\s+", rest, maxsplit=1, flags=re.IGNORECASE)
@@ -295,6 +296,76 @@ def parse_due_time(text: str) -> str | None:
     if m:
         return f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
     return None
+
+
+def infer_time_of_day(text: str) -> str | None:
+    """
+    «Утро / день / вечер / ночь» из свободного текста (без точного времени).
+    Для рутин: «по утрам», «по вечерам»; для задач: «вечером позвонить», «днём съездить».
+    Не срабатывает на «в 10 утра» — там только parse_due_time.
+    """
+    if not text or not text.strip():
+        return None
+    lower = re.sub(r"\s+", " ", text.strip().lower())
+    if "по утрам" in lower:
+        return "утро"
+    if "по вечерам" in lower:
+        return "вечер"
+    if re.search(r"\bутром\b", lower):
+        return "утро"
+    if re.search(r"\bвечером\b", lower):
+        return "вечер"
+    if re.search(r"\bднём\b", lower) or re.search(r"\bднем\b", lower):
+        return "день"
+    if re.search(r"\bночью\b", lower):
+        return "ночь"
+    return None
+
+
+def time_of_day_from_hour(hour: int) -> str | None:
+    """Час 0–23 → период суток для группировки (как у due_time)."""
+    if hour < 0 or hour > 23:
+        return None
+    if hour < 12:
+        return "утро"
+    if hour < 17:
+        return "день"
+    return "вечер"
+
+
+def classify_time_of_day_edit(new_text: str) -> str:
+    """
+    Правая часть «изменить задачу N на …» / «рутину N на …».
+    Возвращает канон: «утро»|«день»|«вечер»|«ночь», «clear» — сбросить time_of_day,
+    «not» — это новое название задачи (не трогаем логику заголовка).
+    """
+    if not new_text or not str(new_text).strip():
+        return "not"
+    s = re.sub(r"\s+", " ", str(new_text).strip()).lower().rstrip(".!")
+    clear_phrases = (
+        "без времени суток",
+        "без времени",
+        "сбрось время суток",
+        "убери время суток",
+        "сбросить время суток",
+        "не указывай время",
+        "убери период",
+        "сбрось период",
+    )
+    if s in clear_phrases:
+        return "clear"
+    s2 = re.sub(r"^(на|в|поставь|сделать|сделай)\s+", "", s)
+    s2 = re.sub(r"^(время суток|время|период)\s+", "", s2).strip()
+    variants_to_canon: list[tuple[str, tuple[str, ...]]] = [
+        ("утро", ("утро", "утром", "по утрам")),
+        ("день", ("день", "днем", "днём")),
+        ("вечер", ("вечер", "вечером", "по вечерам")),
+        ("ночь", ("ночь", "ночью")),
+    ]
+    for canon, variants in variants_to_canon:
+        if s in variants or s2 in variants:
+            return canon
+    return "not"
 
 
 def extract_task_text(user_text: str) -> str:

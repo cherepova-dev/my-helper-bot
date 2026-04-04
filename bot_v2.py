@@ -33,6 +33,9 @@ from categories import assign_category
 from task_parsing import (
     parse_due_date,
     parse_due_time,
+    infer_time_of_day,
+    time_of_day_from_hour,
+    classify_time_of_day_edit,
     extract_task_text,
     starts_with_add_marker,
     starts_with_done_marker,
@@ -89,7 +92,8 @@ HELP_TEXT = (
     "• Нажми «Добавить задачу» и отправь текст следующим сообщением\n"
     "• Или напиши/скажи: «Добавь [задача]», «Создай [задача]», «Запиши [задача]»\n"
     "• Рутины: «Ежедневная зарядка», «Поливать цветы каждый четверг», «Уборка раз в неделю»\n"
-    "• Несколько раз в неделю без дней: «массаж два раза в неделю», «йога 3 раза в неделю»\n\n"
+    "• Несколько раз в неделю без дней: «массаж два раза в неделю», «йога 3 раза в неделю»\n"
+    "• Время суток: «по утрам», «по вечерам», «утром», «вечером», «днём» — в «План на сегодня» и «Рутины» блоки *Утро / День / Вечер*; у обычных задач ещё помогает время «в 14:00».\n\n"
     "*Как выполнить задачу*\n"
     "• «Отметь 3» — по *глобальному* номеру в последнем списке «Список задач»\n"
     "• Несколько сразу: «Отметь 1, 2 и 3», «Выполни 1 4 5», «Отметь 1-3»\n"
@@ -101,7 +105,9 @@ HELP_TEXT = (
     "• «Удали задачу 3» — по *глоб.* номеру из «Список задач»\n"
     "• «Удали рутину 2» — по номеру в экране «Рутины» (/routines)\n\n"
     "*Как изменить задачу*\n"
-    "• «Изменить задачу 2 на Купить хлеб» — новый текст\n"
+    "• «Изменить задачу 2 на Купить хлеб» — новый текст (номер — *глобальный* из «Список задач»)\n"
+    "• «Изменить рутину 3 на вечер» / «… на утро» / «… на день» / «… на ночь» — только время суток\n"
+    "• «Изменить задачу 5 на без времени» — сбросить период суток\n"
     "• «Исправить купить молоко на Купить хлеб»\n\n"
     "*Как перенести задачу*\n"
     "• «Перенеси задачу 3 на завтра», «Перенести задачу 1 на пятницу в 10:00»\n"
@@ -112,7 +118,7 @@ HELP_TEXT = (
     "• «Список задач», «План на сегодня», «Рутины»\n"
     "• В списке у каждого дня: локальный номер + _(глоб. N)_ — команды «отметь» используют *глоб.* N.\n"
     "• Номера в старых сообщениях чата не обновляются — ориентируйся на последний список.\n"
-    "• «Сделано сегодня», «Сделано за неделю», «Отчёт за неделю»\n\n"
+    "• «Сделано сегодня», «Сделано за неделю» — по категориям с иконками; за неделю сводка, дата·время факта, повторы рутин и короткий разбор.\n\n"
     "*Перенос даты*\n"
     "• «Перенеси задачу 6 на второе апреля», «на 2 апреля», «на 15.05»\n"
 )
@@ -194,6 +200,7 @@ def _build_confirmation(
     category_name: str = "Другое",
     is_routine: bool = False,
     repeat_day: str | None = None,
+    time_of_day: str | None = None,
 ) -> str:
     """Текст подтверждения одной задачи."""
     if is_routine and repeat_day:
@@ -213,9 +220,10 @@ def _build_confirmation(
         f"📂 Категория: {category_emoji} {category_name}",
         f"📅 Срок: {date_display}",
         "🔥 Приоритет: 5/10",
-        "",
-        "_Всё верно? Если нет — напиши, что исправить._",
     ]
+    if (time_of_day or "").strip():
+        lines.append(f"⏳ Время суток: *{time_of_day.strip()}*")
+    lines.extend(["", "_Всё верно? Если нет — напиши, что исправить._"])
     return "\n".join(lines)
 
 
@@ -238,6 +246,52 @@ def _format_date_human(date_str: str) -> str:
 def _format_time_human(time_str: str) -> str:
     """Возвращает время в человекочитаемом виде (HH:MM)."""
     return (time_str or "").strip()
+
+
+# Порядок блоков в «план на сегодня» и в рутинах (визуальное разделение списка)
+_TIME_BUCKET_ORDER = ("утро", "день", "вечер", "ночь", "")
+_TIME_BUCKET_HEADER = {
+    "утро": "🌅 *Утро*",
+    "день": "☀️ *День*",
+    "вечер": "🌆 *Вечер*",
+    "ночь": "🌙 *Ночь*",
+}
+
+
+def _task_time_bucket(t: dict) -> str:
+    """Период суток для группировки: сначала поле time_of_day, иначе по due_time."""
+    tod = (t.get("time_of_day") or "").strip().lower()
+    if tod in ("утро", "день", "вечер", "ночь"):
+        return tod
+    ti = (t.get("due_time") or "").strip()
+    if ti:
+        try:
+            h = int(ti.split(":", 1)[0])
+            inferred = time_of_day_from_hour(h)
+            if inferred:
+                return inferred
+        except (ValueError, IndexError):
+            pass
+    return ""
+
+
+def _group_tasks_by_time_bucket(
+    items: list[tuple[int, dict]],
+) -> list[tuple[str, list[tuple[int, dict]]]]:
+    buckets: dict[str, list[tuple[int, dict]]] = {k: [] for k in _TIME_BUCKET_ORDER}
+    for pair in items:
+        b = _task_time_bucket(pair[1])
+        buckets[b].append(pair)
+
+    def sort_key(p: tuple[int, dict]) -> tuple:
+        t = p[1]
+        return (t.get("due_time") or "99:99", t.get("id", 0))
+
+    out: list[tuple[str, list[tuple[int, dict]]]] = []
+    for b in _TIME_BUCKET_ORDER:
+        if buckets[b]:
+            out.append((b, sorted(buckets[b], key=sort_key)))
+    return out
 
 
 def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
@@ -301,16 +355,25 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
 
     if routines_list:
         lines.append("*🔁 Рутины*")
-        for loc_i, (num, t) in enumerate(routines_list, start=1):
-            emoji = t.get("category_emoji") or "🔁"
-            text = t["text"]
-            repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
-            if with_numbers:
-                prefix = f"{loc_i}. _(глоб. {num})_ "
-            else:
-                prefix = ""
-            lines.append(f"{prefix}{emoji} {text} — _{repeat_label}_")
         lines.append("")
+        for bucket, pairs in _group_tasks_by_time_bucket(routines_list):
+            if bucket:
+                lines.append(_TIME_BUCKET_HEADER[bucket])
+                lines.append("")
+            for loc_i, (num, t) in enumerate(pairs, start=1):
+                emoji = t.get("category_emoji") or "🔁"
+                text = t["text"]
+                repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
+                tod_part = ""
+                td = (t.get("time_of_day") or "").strip()
+                if td and not bucket:
+                    tod_part = f" · _{td}_"
+                if with_numbers:
+                    prefix = f"{loc_i}. _(глоб. {num})_ "
+                else:
+                    prefix = ""
+                lines.append(f"{prefix}{emoji} {text}{tod_part} — _{repeat_label}_")
+            lines.append("")
 
     return "\n".join(lines).strip()
 
@@ -353,6 +416,13 @@ async def _save_one_task_and_reply(
     is_routine, repeat_day = routines.is_routine_and_repeat(task_text)
     due_date = _parse_due_date(task_text) if not is_routine else None
     due_time = _parse_due_time(task_text) if not is_routine else None
+    time_of_day_val = infer_time_of_day(task_text)
+    if not time_of_day_val and due_time and not is_routine:
+        try:
+            h = int(str(due_time).split(":", 1)[0])
+            time_of_day_val = time_of_day_from_hour(h)
+        except (ValueError, IndexError):
+            time_of_day_val = None
     # Убираем дату, время и фразы рутины из названия задачи
     task_title = (clean_task_text_from_datetime(task_text) or task_text).strip()
     if is_routine:
@@ -390,6 +460,7 @@ async def _save_one_task_and_reply(
             category_name=category_name,
             due_date=due_date,
             due_time=due_time,
+            time_of_day=time_of_day_val,
             priority_value=5,
             priority_urgency=5,
             priority_risk=5,
@@ -404,6 +475,7 @@ async def _save_one_task_and_reply(
                 category_name=category_name,
                 is_routine=is_routine,
                 repeat_day=task_row.get("repeat_day") or repeat_day,
+                time_of_day=(task_row.get("time_of_day") or time_of_day_val),
             )
             await _reply(update, msg)
             logger.info("v2: задача сохранена id=%s text='%s'", task_row.get("id"), task_title[:50])
@@ -481,22 +553,38 @@ async def cmd_routines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not routine_tasks:
         await _reply(update, "🔁 *Рутины*\n\n_Пока нет рутин. Добавь, например: «Ежедневная зарядка», «Поливать цветы каждый четверг», «Уборка раз в неделю»._")
         return
-    lines = ["🔁 *Рутины*\n"]
-    for i, t in enumerate(routine_tasks, start=1):
-        repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
-        emoji = t.get("category_emoji") or "🔁"
-        lines.append(f"{i}. {emoji} {t['text']} — _{repeat_label}_")
-    await _reply(update, "\n".join(lines))
+    lines = ["🔁 *Рутины*", ""]
+    indexed = [(i, t) for i, t in enumerate(routine_tasks, start=1)]
+    for bucket, group in _group_tasks_by_time_bucket(indexed):
+        if bucket:
+            lines.append(_TIME_BUCKET_HEADER[bucket])
+            lines.append("")
+        for num, t in group:
+            repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
+            emoji = t.get("category_emoji") or "🔁"
+            lines.append(f"{num}. {emoji} {t['text']} — _{repeat_label}_")
+        lines.append("")
+    await _reply(update, "\n".join(lines).rstrip())
 
 
 def _format_today_list(ordered_today: list[tuple[int, dict]], title: str = "📅 *План на сегодня*") -> str:
-    """Список задач на сегодня: список пар (номер в общем списке, задача). Рутины с 🔁 (RT-F8)."""
+    """Список задач на сегодня: блоки утро/день/вечер, номера как в общем списке."""
     lines = [f"{title}\n"]
-    for num, t in ordered_today:
-        emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
-        time_part = f" в {_format_time_human(t['due_time'])}" if t.get("due_time") else ""
-        lines.append(f"{num}. {emoji} {t['text']}{time_part}")
-    return "\n".join(lines)
+    for bucket, pairs in _group_tasks_by_time_bucket(ordered_today):
+        if bucket:
+            lines.append(_TIME_BUCKET_HEADER[bucket])
+            lines.append("")
+        for num, t in pairs:
+            emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
+            time_part = f" в {_format_time_human(t['due_time'])}" if t.get("due_time") else ""
+            tod_hint = ""
+            td = (t.get("time_of_day") or "").strip()
+            if td and not t.get("due_time") and not bucket:
+                tod_hint = f" · _{td}_"
+            lines.append(f"{num}. {emoji} {t['text']}{time_part}{tod_hint}")
+        if bucket:
+            lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 async def _send_remaining_today(update: Update, user_id: int) -> None:
@@ -583,6 +671,88 @@ def _format_completed_datetime(dt) -> str:
     return f"{dt.day} {_MONTH_RU[dt.month]} в {dt.strftime('%H:%M')}"
 
 
+def _format_completed_compact(dt) -> str:
+    """Компактно: дата факта + время (для недельного отчёта)."""
+    if not dt:
+        return ""
+    return f"{dt.day:02d}.{dt.month:02d} · {dt.strftime('%H:%M')}"
+
+
+def _plural_tasks_word(n: int) -> str:
+    n = int(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return "задача"
+    if 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
+        return "задачи"
+    return "задач"
+
+
+def _plural_days_word(n: int) -> str:
+    n = int(n)
+    if n % 10 == 1 and n % 100 != 11:
+        return "день"
+    if 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
+        return "дня"
+    return "дней"
+
+
+def _routine_rollup_entries(tasks: list[dict]) -> list[tuple[str, int]]:
+    """Рутины с 2+ отметками за период — для сводки «сколько раз»."""
+    tallies: dict[str, tuple[str, int]] = {}
+    for t in tasks:
+        if not t.get("is_routine"):
+            continue
+        raw = (t.get("text") or "").strip()
+        if not raw:
+            continue
+        k = raw.lower()
+        if k not in tallies:
+            tallies[k] = (raw, 0)
+        disp, c = tallies[k]
+        tallies[k] = (disp, c + 1)
+    out = [(disp, c) for disp, c in tallies.values() if c >= 2]
+    out.sort(key=lambda x: -x[1])
+    return out
+
+
+def _format_week_insight_lines(by_day: dict, n_tasks: int) -> list[str]:
+    """Короткий «анализ» недели без сложной аналитики."""
+    lines = ["*📊 Неделя в двух словах*", ""]
+    active_keys = [k for k in by_day if k != "_no_date_"]
+    if not active_keys:
+        lines.append("_Пока мало отметок — зато есть куда расти._")
+        return lines
+    counts = [(k, len(by_day[k])) for k in active_keys]
+    counts.sort(key=lambda x: -x[1])
+    best_key, best_n = counts[0]
+    best_label = _format_date_human(best_key)
+    wd_part = ""
+    try:
+        dtp = datetime.strptime(best_key, "%Y-%m-%d")
+        wd_short = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"][dtp.weekday()]
+        wd_part = f" ({wd_short})"
+    except ValueError:
+        pass
+    lines.append(
+        f"· Самый насыщенный день: *{best_label}*{wd_part} — *{best_n}* {_plural_tasks_word(best_n)}."
+    )
+    days_marked = len(counts)
+    avg = n_tasks / max(days_marked, 1)
+    lines.append(
+        f"· В среднем *{avg:.1f}* задач на день с отметками "
+        f"(*{days_marked}* {_plural_days_word(days_marked)} из 7)."
+    )
+    if n_tasks >= 14:
+        lines.append("· _Очень плотная неделя — много закрытых дел._")
+    elif n_tasks >= 7:
+        lines.append("· _Хороший, устойчивый темп._")
+    elif n_tasks >= 3:
+        lines.append("· _Заметный прогресс, можно наращивать._")
+    else:
+        lines.append("· _Спокойный ритм; микрошаги тоже считаются._")
+    return lines
+
+
 def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
     """Отчёт за день: сводка, группировка по категориям, время выполнения, дружелюбный пустой."""
     if not tasks:
@@ -602,20 +772,23 @@ def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
             cats[key] = []
         cats[key].append(t)
     n_cats = len(cats)
-    lines.append(f"Выполнено: *{n}* задач · *{n_cats}* категорий")
-    lines.append("")
+    lines.extend(["*📌 Итог*", f"· задач: *{n}*", f"· категорий: *{n_cats}*", ""])
+    first_block = True
     for emoji, name in _REPORT_CATEGORY_ORDER:
         group = cats.get((emoji, name), [])
         if not group:
             continue
-        lines.append(f"*{emoji} {name}*")
+        if not first_block:
+            lines.extend(["· · · · ·", ""])
+        first_block = False
+        lines.append(f"{emoji} *{name}*")
         for t in group:
             text = (t.get("text") or "").strip()
             ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
             dt = _parse_completed_at(ts, tz_name)
             time_str = _format_completed_time(dt) if dt else ""
             routine_mark = " 🔁" if t.get("is_routine") else ""
-            lines.append(f"  🔹 {text}{time_str}{routine_mark}")
+            lines.append(f"  ▸ {emoji} {text}{time_str}{routine_mark}")
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -644,15 +817,26 @@ def _format_done_report_week(tasks: list[dict], tz_name: str) -> str:
         name = t.get("category_name") or "Другое"
         key = (emoji, name)
         cat_counts[key] = cat_counts.get(key, 0) + 1
-    cat_line_parts = [
-        f"{e} {n}: {c}" for (e, n), c in sorted(cat_counts.items(), key=lambda x: -x[1])
-    ]
-    if cat_line_parts:
-        lines.append("По категориям: " + " · ".join(cat_line_parts))
+    lines.append("*📂 Категории (7 дней)*")
     lines.append("")
+    for emoji, name in _REPORT_CATEGORY_ORDER:
+        c = cat_counts.get((emoji, name), 0)
+        if c:
+            lines.append(f"  {emoji} *{name}:* {c}")
+    lines.append("")
+    roll = _routine_rollup_entries(tasks)
+    if roll:
+        lines.append("*🔁 Повторы за неделю*")
+        lines.append("_Одно и то же дело отмечено несколько раз — так виден ритм._")
+        lines.append("")
+        for disp, c in roll:
+            lines.append(f"  · *{disp}* ×{c}")
+        lines.append("")
     day_keys = sorted([k for k in by_day.keys() if k != "_no_date_"], reverse=True)
     if "_no_date_" in by_day:
         day_keys.append("_no_date_")
+    lines.append("*🗓 По дням*")
+    lines.append("")
     for day_key in day_keys:
         group = by_day[day_key]
         ts_first = (group[0].get("_use_completed_at") or group[0].get("completed_at") or group[0].get("last_completed_at")) if group else None
@@ -664,25 +848,33 @@ def _format_done_report_week(tasks: list[dict], tz_name: str) -> str:
         by_cat = {}
         for t in group:
             emoji = t.get("category_emoji") or "📝"
-            name = t.get("category_name") or "Другое"
-            key = (emoji, name)
+            cname = t.get("category_name") or "Другое"
+            key = (emoji, cname)
             if key not in by_cat:
                 by_cat[key] = []
             by_cat[key].append(t)
         for emoji, name in _REPORT_CATEGORY_ORDER:
             sub = by_cat.get((emoji, name), [])
+            if not sub:
+                continue
+            lines.append(f"  {emoji} *{name}*")
             for t in sub:
                 text = (t.get("text") or "").strip()
                 ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
                 dt = _parse_completed_at(ts, tz_name)
-                time_str = _format_completed_time(dt) if dt else ""
                 routine_part = ""
                 if t.get("is_routine") and t.get("repeat_day"):
                     routine_part = f" 🔁 {db.format_repeat_day_display(t.get('repeat_day'))}"
                 elif t.get("is_routine"):
                     routine_part = " 🔁"
-                lines.append(f"  🔹 {emoji} {text}{time_str}{routine_part}")
+                if dt:
+                    fact = _format_completed_compact(dt)
+                    lines.append(f"    ▸ {emoji} {text} · _{fact}_{routine_part}")
+                else:
+                    lines.append(f"    ▸ {emoji} {text}{routine_part}")
         lines.append("")
+    lines.extend(_format_week_insight_lines(by_day, n))
+    lines.append("")
     return "\n".join(lines).rstrip()
 
 
@@ -888,13 +1080,15 @@ def _resolve_task_by_num_or_search(uid: int, num: int | None, search_text: str |
 
 
 async def _handle_edit(update: Update, user_row: dict, text: str) -> None:
-    """Изменить описание задачи: «Изменить задачу 2 на Купить хлеб»."""
+    """Изменить текст задачи/рутины или только время суток (глобальный номер из списка задач)."""
     uid = user_row["id"]
     num, search_text, new_text = extract_edit_target(text)
     if not new_text or not new_text.strip():
         await _reply(
             update,
-            "Напиши, например: _Изменить задачу 2 на Купить хлеб_ или _Исправить купить молоко на Купить хлеб_.",
+            "Напиши, например: _Изменить задачу 2 на Купить хлеб_, "
+            "_Изменить рутину 3 на вечер_, "
+            "_Исправить купить молоко на Купить хлеб_.",
         )
         return
     task = _resolve_task_by_num_or_search(uid, num, search_text)
@@ -904,7 +1098,24 @@ async def _handle_edit(update: Update, user_row: dict, text: str) -> None:
         else:
             await _reply(update, f"Задача по запросу «{search_text}» не найдена или найдено несколько — укажи номер.")
         return
-    new_title = normalize_task_display(new_text.strip())
+    new_raw = new_text.strip()
+    tod_action = classify_time_of_day_edit(new_raw)
+    if tod_action != "not":
+        new_tod = None if tod_action == "clear" else tod_action
+        updated = db.update_task(task["id"], uid, time_of_day=new_tod)
+        if updated:
+            title = updated.get("text") or task.get("text", "")
+            if tod_action == "clear":
+                await _reply(update, f"✏️ Время суток сброшено: «{title}»")
+            else:
+                await _reply(
+                    update,
+                    f"✏️ Время суток: *{new_tod}* — «{title}»",
+                )
+        else:
+            await _reply(update, "Не удалось обновить время суток.")
+        return
+    new_title = normalize_task_display(new_raw)
     if new_title and new_title[0].isalpha():
         new_title = new_title[0].upper() + new_title[1:]
     updated = db.update_task(task["id"], uid, text=new_title)
