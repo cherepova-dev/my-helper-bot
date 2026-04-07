@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -39,6 +39,17 @@ if not _secret:
         print("WARNING: WEB_SESSION_SECRET not set; set it in production.", file=sys.stderr)
 
 app.add_middleware(SessionMiddleware, secret_key=_secret, same_site="lax")
+
+
+def _consume_flash(request: Request) -> dict:
+    """Забирает одноразовое сообщение из сессии при рендере шаблона (после Session)."""
+    return {
+        "msg": request.session.pop("flash_msg", None),
+        "kind": request.session.pop("flash_kind", "ok"),
+    }
+
+
+templates.env.globals["consume_flash"] = _consume_flash
 
 
 def _password_ok() -> str:
@@ -124,16 +135,59 @@ async def logout(request: Request):
     return RedirectResponse("/login", status_code=302)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def root(request: Request):
-    if not request.session.get("auth"):
-        return RedirectResponse("/login", status_code=302)
-    return RedirectResponse("/today", status_code=302)
-
-
 def _ctx(**extra):
     """Контекст шаблона без request — его подставляет Jinja2Templates."""
     return extra
+
+
+def _greeting_hour() -> str:
+    from datetime import datetime
+
+    h = datetime.now().hour
+    if 5 <= h < 12:
+        return "Доброе утро"
+    if 12 <= h < 17:
+        return "Добрый день"
+    if 17 <= h < 23:
+        return "Добрый вечер"
+    return "Доброй ночи"
+
+
+def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> RedirectResponse:
+    path = dest.split("?", 1)[0].rstrip("/") or "/"
+    if path in ("/", "/today", "/actions"):
+        request.session["flash_msg"] = message
+        request.session["flash_kind"] = "ok" if ok else "err"
+    return RedirectResponse(dest, status_code=302)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def page_home(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    from bot_v2 import _active_tasks_display_order
+
+    user_row = get_user_row()
+    uid = user_row["id"]
+    db.transfer_overdue_tasks(uid)
+    today_tasks = db.get_today_tasks(uid)
+    ordered = _active_tasks_display_order(uid)
+    today_ids = {t["id"] for t in today_tasks}
+    n_today = sum(1 for t in ordered if t["id"] in today_ids)
+    n_tasks = len(ordered)
+    n_routines = len(db.get_routine_tasks(uid))
+    name = (user_row.get("first_name") or "").strip() or "друг"
+    return templates.TemplateResponse(
+        request,
+        "home.html",
+        _ctx(
+            greeting=_greeting_hour(),
+            user_name=name,
+            n_today=n_today,
+            n_tasks=n_tasks,
+            n_routines=n_routines,
+        ),
+    )
 
 
 @app.get("/today", response_class=HTMLResponse)
@@ -286,16 +340,10 @@ async def page_actions(request: Request):
     uid = get_user_row()["id"]
     done = db.get_done_tasks_today(uid)
     done_items = [{"text": t.get("text", "")} for t in done]
-    flash_msg = request.session.pop("flash_msg", None)
-    flash_kind = request.session.pop("flash_kind", "ok")
     return templates.TemplateResponse(
         request,
         "actions.html",
-        _ctx(
-            done_items=done_items,
-            flash_msg=flash_msg,
-            flash_kind=flash_kind if flash_msg else "ok",
-        ),
+        _ctx(done_items=done_items),
     )
 
 
@@ -324,6 +372,9 @@ async def action_add(request: Request, text: str = Form("")):
     user_row = get_user_row()
     result = add_task_from_text(user_row, text)
     dest = request.query_params.get("next", "/today")
+    path = dest.split("?", 1)[0].rstrip("/") or "/"
+    if path in ("/", "/today", "/actions"):
+        return _flash_redirect(request, dest, result["message"], result["ok"])
     q = "ok=1" if result["ok"] else "err=add"
     sep = "&" if "?" in dest else "?"
     return RedirectResponse(f"{dest}{sep}{q}", status_code=302)
@@ -342,23 +393,33 @@ async def action_complete(request: Request):
         except (TypeError, ValueError):
             pass
     uid = get_user_row()["id"]
-    if not nums:
-        return RedirectResponse("/today?err=complete", status_code=302)
-    ok_titles, fail = complete_task_numbers(uid, nums)
     dest = request.query_params.get("next", "/today")
+    path = dest.split("?", 1)[0].rstrip("/") or "/"
+    flash_dest = path in ("/", "/today", "/actions")
+
+    if not nums:
+        if flash_dest:
+            return _flash_redirect(request, dest, "Выбери задачи или проверь номера.", False)
+        return RedirectResponse(f"{dest}?err=complete", status_code=302)
+    ok_titles, fail = complete_task_numbers(uid, nums)
+    if flash_dest:
+        if ok_titles and not fail:
+            return _flash_redirect(
+                request, dest, f"Отмечено выполненным: {len(ok_titles)}.", True
+            )
+        if ok_titles and fail:
+            return _flash_redirect(
+                request,
+                dest,
+                f"Частично: {len(ok_titles)} ок, ошибка по номерам: {fail}.",
+                False,
+            )
+        return _flash_redirect(request, dest, "Не удалось отметить выбранное.", False)
     if ok_titles and not fail:
         return RedirectResponse(f"{dest}?done={len(ok_titles)}", status_code=302)
     if ok_titles and fail:
         return RedirectResponse(f"{dest}?done={len(ok_titles)}&fail={len(fail)}", status_code=302)
     return RedirectResponse(f"{dest}?err=complete", status_code=302)
-
-
-def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> RedirectResponse:
-    path = dest.split("?", 1)[0]
-    if path.rstrip("/") == "/actions":
-        request.session["flash_msg"] = message
-        request.session["flash_kind"] = "ok" if ok else "err"
-    return RedirectResponse(dest, status_code=302)
 
 
 @app.post("/tasks/complete_quick")
@@ -368,23 +429,30 @@ async def action_complete_quick(request: Request, nums: str = Form("")):
     uid = get_user_row()["id"]
     parsed = parse_number_list(nums)
     dest = request.query_params.get("next", "/today")
+    path = dest.split("?", 1)[0].rstrip("/") or "/"
+    flash_dest = path in ("/", "/today", "/actions")
+
     if not parsed:
-        if dest.startswith("/actions"):
-            request.session["flash_msg"] = "Укажи номера, например: 1, 2, 3"
-            request.session["flash_kind"] = "err"
-        return RedirectResponse(dest + ("?err=complete" if not dest.startswith("/actions") else ""), status_code=302)
+        if flash_dest:
+            return _flash_redirect(request, dest, "Укажи номера, например: 1, 2, 3", False)
+        return RedirectResponse(f"{dest}?err=complete", status_code=302)
+
     ok_titles, fail = complete_task_numbers(uid, parsed)
-    if dest.startswith("/actions"):
+    if flash_dest:
         if ok_titles and not fail:
-            request.session["flash_msg"] = f"Отмечено выполненным: {len(ok_titles)}."
-            request.session["flash_kind"] = "ok"
-        elif ok_titles and fail:
-            request.session["flash_msg"] = f"Частично: {len(ok_titles)} ок, номера с ошибкой: {fail}."
-            request.session["flash_kind"] = "err"
-        else:
-            request.session["flash_msg"] = f"Не удалось отметить номера: {fail}."
-            request.session["flash_kind"] = "err"
-        return RedirectResponse(dest, status_code=302)
+            return _flash_redirect(
+                request, dest, f"Отмечено выполненным: {len(ok_titles)}.", True
+            )
+        if ok_titles and fail:
+            return _flash_redirect(
+                request,
+                dest,
+                f"Частично: {len(ok_titles)} ок, ошибка по номерам: {fail}.",
+                False,
+            )
+        return _flash_redirect(
+            request, dest, f"Не удалось отметить номера: {fail}.", False
+        )
     if ok_titles and not fail:
         return RedirectResponse(f"{dest}?done={len(ok_titles)}", status_code=302)
     if ok_titles and fail:
@@ -436,10 +504,15 @@ async def action_uncomplete(request: Request, num: int = Form(...)):
 @app.post("/tasks/voice")
 async def action_voice(request: Request, file: UploadFile = File(...)):
     if not request.session.get("auth"):
+        if "application/json" in (request.headers.get("accept") or ""):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    dest = request.query_params.get("next", "/actions")
+    wants_json = "application/json" in (request.headers.get("accept") or "")
+    dest = request.query_params.get("next", "/")
     body = await file.read()
     if not body:
+        if wants_json:
+            return JSONResponse({"ok": False, "message": "Пустой файл."})
         return _flash_redirect(request, dest, "Пустой файл.", False)
     raw_name = file.filename or ""
     suf = Path(raw_name).suffix.lower()
@@ -447,14 +520,20 @@ async def action_voice(request: Request, file: UploadFile = File(...)):
         suf = ".webm"
     text = ai_module.transcribe_voice(body, suffix=suf)
     if not text:
-        return _flash_redirect(
-            request,
-            dest,
-            "Не удалось распознать речь (проверьте ключ API и формат аудио).",
-            False,
-        )
+        msg = "Не удалось распознать речь (проверьте ключ API и формат аудио)."
+        if wants_json:
+            return JSONResponse({"ok": False, "message": msg})
+        return _flash_redirect(request, dest, msg, False)
     user_row = get_user_row()
     result = add_task_from_text(user_row, text)
+    if wants_json:
+        return JSONResponse(
+            {
+                "ok": result["ok"],
+                "message": result["message"],
+                "transcript": text if result["ok"] else None,
+            }
+        )
     return _flash_redirect(request, dest, result["message"], result["ok"])
 
 

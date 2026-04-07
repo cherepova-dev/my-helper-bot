@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ title }}{% endblock %}
+{% block top_title %}{{ title }}{% endblock %}
 {% block content %}
-<h1>{{ title }}</h1>
+<h1 class="page-heading">{{ title }}</h1>
 <pre class="report">{{ body_text }}</pre>
-<p class="muted"><a href="/today">← Назад к плану</a></p>
+<p class="muted"><a href="/">← На главную</a></p>
 {% endblock %}

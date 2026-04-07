@@ -37,3 +37,10 @@ def test_root_redirects_to_login(client):
     r = client.get("/", follow_redirects=False)
     assert r.status_code in (302, 307)
     assert "/login" in r.headers.get("location", "")
+
+
+def test_home_after_login(client):
+    client.post("/login", data={"password": "test-secret"})
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Что делаем" in r.text or "Главная" in r.text

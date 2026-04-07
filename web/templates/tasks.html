@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Все задачи{% endblock %}
+{% block top_title %}Все задачи{% endblock %}
 {% block content %}
-<h1>Все задачи</h1>
+<h1 class="page-heading">Все задачи</h1>
+<p class="muted">Номера в этом списке — те же, что для «Отметить» и быстрых действий.</p>
 {% if empty %}
 <p class="muted">Нет активных задач.</p>
 {% else %}
 <pre class="task-dump">{{ list_markdown }}</pre>
 {% endif %}
+<p class="muted"><a href="/today">План на сегодня</a> · <a href="/actions">Действия</a></p>
 {% endblock %}

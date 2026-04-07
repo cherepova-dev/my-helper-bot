@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Главная{% endblock %}
+{% block top_title %}Главная{% endblock %}
+{% block content %}
+<header class="home-hero">
+  <p class="home-greeting">{{ greeting }}, {{ user_name }}!</p>
+  <h1 class="home-title">Что делаем сегодня?</h1>
+  <p class="muted home-lead">Все разделы — только в меню слева (на телефоне — кнопка «☰»). Ниже — быстрый ввод и сводка.</p>
+</header>
+
+{% set next_add = "/" %}
+{% set next_voice = "/" %}
+{% include "partials/composer.html" %}
+
+<section class="dashboard-grid" aria-label="Сводка">
+  <a href="/today" class="dash-card">
+    <span class="dash-card-kicker">Сегодня</span>
+    <span class="dash-card-value">{{ n_today }}</span>
+    <span class="dash-card-hint">задач в плане</span>
+  </a>
+  <a href="/tasks" class="dash-card">
+    <span class="dash-card-kicker">Все задачи</span>
+    <span class="dash-card-value">{{ n_tasks }}</span>
+    <span class="dash-card-hint">активных</span>
+  </a>
+  <a href="/routines" class="dash-card">
+    <span class="dash-card-kicker">Рутины</span>
+    <span class="dash-card-value">{{ n_routines }}</span>
+    <span class="dash-card-hint">повторов</span>
+  </a>
+  <a href="/reports/today" class="dash-card dash-card--accent">
+    <span class="dash-card-kicker">Отчёт</span>
+    <span class="dash-card-value">✓</span>
+    <span class="dash-card-hint">сделано сегодня</span>
+  </a>
+</section>
+
+<section class="home-actions card">
+  <h2 class="home-section-title">Быстрые действия</h2>
+  <ul class="home-link-list">
+    <li><a href="/today">План на сегодня</a> — отметить галочками</li>
+    <li><a href="/actions">Действия</a> — удалить, перенести, отменить выполнение</li>
+    <li><a href="/reports/week">Сделано за неделю</a></li>
+    <li><a href="/help">Справка по командам</a></li>
+  </ul>
+</section>
+{% endblock %}

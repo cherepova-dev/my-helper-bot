@@ -1,0 +1,18 @@
+{# Параметры: next_add, next_voice — пути для редиректа после добавления / голоса #}
+<section class="composer card">
+  <h2 class="composer-title">Новая задача</h2>
+  <form method="post" action="/tasks/add?next={{ next_add }}" class="composer-row composer-form">
+    <input type="text" name="text" autocomplete="off" placeholder="Текст задачи или рутины…" required class="composer-input">
+    <button type="submit" class="btn-primary">Добавить</button>
+  </form>
+  <div class="voice-root" data-voice-root data-voice-endpoint="/tasks/voice?next={{ next_voice }}">
+    <div class="composer-row voice-buttons">
+      <button type="button" class="btn-voice" data-voice-record>🎤 Записать голосом</button>
+      <label class="btn-file">
+        Файл…
+        <input type="file" data-voice-file accept="audio/*,.webm,.ogg,.wav,.mp3,.m4a" hidden>
+      </label>
+    </div>
+    <p class="voice-status" data-voice-status></p>
+  </div>
+</section>

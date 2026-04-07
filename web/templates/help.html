@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Справка{% endblock %}
+{% block top_title %}Справка{% endblock %}
 {% block content %}
-<h1>Справка</h1>
+<h1 class="page-heading">Справка</h1>
 <p class="muted">Те же правила, что в Telegram-боте. Номера задач — глобальные из последнего списка «Все задачи».</p>
 <pre class="help-text" id="help-pre">{{ help_text }}</pre>
 {% endblock %}
