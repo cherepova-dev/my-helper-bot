@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Действия{% endblock %}
+{% block content %}
+<h1>Действия</h1>
+<p class="muted">Аналог текстовых команд бота. Номера задач — как в «Все задачи»; номера рутин при удалении — как на экране «Рутины».</p>
+
+{% if flash_msg %}
+<p class="flash {{ flash_kind or 'ok' }}">{{ flash_msg }}</p>
+{% elif request.query_params.get('ok') %}
+<p class="flash ok">Готово.</p>
+{% elif request.query_params.get('err') %}
+<p class="flash err">Операция не выполнена (проверь поля).</p>
+{% endif %}
+
+<section class="action-section">
+  <h2>Быстро отметить выполненным</h2>
+  <p class="muted">Глобальные номера из списка задач: 1, 2, 3 или диапазон 1-3.</p>
+  <form method="post" action="/tasks/complete_quick?next=/actions" class="inline-form">
+    <input type="text" name="nums" placeholder="Например: 1, 2, 4" required>
+    <button type="submit">Отметить</button>
+  </form>
+</section>
+
+<section class="action-section">
+  <h2>Удалить задачу или рутину</h2>
+  <form method="post" action="/tasks/delete?next=/actions" class="stack-form">
+    <label>Номер <input type="number" name="num" min="1" required></label>
+    <label class="radio-row"><input type="radio" name="kind" value="task" checked> Задача (номер из «Все задачи»)</label>
+    <label class="radio-row"><input type="radio" name="kind" value="routine"> Рутина (номер из «Рутины»)</label>
+    <button type="submit">Удалить</button>
+  </form>
+</section>
+
+<section class="action-section">
+  <h2>Изменить задачу</h2>
+  <p class="muted">Как в боте, одной фразой.</p>
+  <form method="post" action="/tasks/edit?next=/actions" class="stack-form">
+    <textarea name="phrase" rows="2" placeholder="Изменить задачу 2 на Купить хлеб" required></textarea>
+    <button type="submit">Сохранить</button>
+  </form>
+</section>
+
+<section class="action-section">
+  <h2>Перенести задачу</h2>
+  <form method="post" action="/tasks/reschedule?next=/actions" class="stack-form">
+    <textarea name="phrase" rows="2" placeholder="Перенеси задачу 3 на завтра" required></textarea>
+    <button type="submit">Перенести</button>
+  </form>
+</section>
+
+<section class="action-section">
+  <h2>Отменить выполнение (сегодня)</h2>
+  {% if not done_items %}
+  <p class="muted">Сегодня нет выполненных задач.</p>
+  {% else %}
+  <ol class="done-mini">
+    {% for it in done_items %}
+    <li>{{ it.text }}</li>
+    {% endfor %}
+  </ol>
+  <form method="post" action="/tasks/uncomplete?next=/actions" class="inline-form">
+    <input type="number" name="num" min="1" max="{{ done_items|length }}" placeholder="Номер в списке выше" required>
+    <button type="submit">Вернуть в активные</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="action-section">
+  <h2>Голосом (как в боте)</h2>
+  <p class="muted">Загрузите короткое аудио — текст пойдёт в добавление задачи. Нужен API-ключ (GROQ и т.д.) на сервере.</p>
+  <form method="post" action="/tasks/voice?next=/actions" enctype="multipart/form-data" class="inline-form">
+    <input type="file" name="file" accept="audio/*,.ogg,.webm,.wav,.mp3" required>
+    <button type="submit">Распознать и добавить</button>
+  </form>
+</section>
+{% endblock %}

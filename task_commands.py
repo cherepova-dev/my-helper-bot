@@ -18,6 +18,9 @@ from task_parsing import (
     time_of_day_from_hour,
     clean_task_text_from_datetime,
     normalize_task_display,
+    extract_edit_target,
+    extract_reschedule_target,
+    classify_time_of_day_edit,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,3 +138,159 @@ def complete_task_numbers(user_id: int, nums: list[int]) -> tuple[list[str], lis
         else:
             fail_nums.append(n)
     return ok_titles, fail_nums
+
+
+def delete_task_by_number(user_id: int, num: int, is_routine: bool) -> dict[str, Any]:
+    """Удаление по номеру: задачи — глобальный номер из списка; рутины — номер из экрана рутин."""
+    from bot_v2 import _active_tasks_display_order
+
+    if is_routine:
+        tasks = db.get_routine_tasks(user_id)
+        list_name = "рутин"
+    else:
+        tasks = _active_tasks_display_order(user_id)
+        list_name = "задач"
+    if not tasks:
+        return {"ok": False, "message": f"Нет {list_name} для удаления."}
+    if not (1 <= num <= len(tasks)):
+        return {
+            "ok": False,
+            "message": f"Нет {list_name} с номером {num}. В списке от 1 до {len(tasks)}.",
+        }
+    task = tasks[num - 1]
+    if db.delete_task(task["id"], user_id):
+        return {"ok": True, "message": f"Удалено: «{task.get('text', '')}»"}
+    return {"ok": False, "message": "Не удалось удалить."}
+
+
+def apply_edit_phrase(user_id: int, phrase: str) -> dict[str, Any]:
+    """Текст как в боте: «Изменить задачу 2 на …», «Исправить … на …»."""
+    from bot_v2 import _resolve_task_by_num_or_search
+
+    num, search_text, new_text = extract_edit_target(phrase or "")
+    if not new_text or not new_text.strip():
+        return {
+            "ok": False,
+            "message": "Укажи новый текст после « на », например: Изменить задачу 2 на Купить хлеб.",
+        }
+    task = _resolve_task_by_num_or_search(user_id, num, search_text)
+    if task is None:
+        if num is not None:
+            return {"ok": False, "message": f"Нет задачи с номером {num}. Открой «Все задачи» и проверь номер."}
+        return {
+            "ok": False,
+            "message": f"Задача не найдена или найдено несколько совпадений — укажи номер из списка.",
+        }
+    new_raw = new_text.strip()
+    tod_action = classify_time_of_day_edit(new_raw)
+    if tod_action != "not":
+        new_tod = None if tod_action == "clear" else tod_action
+        updated = db.update_task(task["id"], user_id, time_of_day=new_tod)
+        if updated:
+            title = updated.get("text") or task.get("text", "")
+            if tod_action == "clear":
+                return {"ok": True, "message": f"Время суток сброшено: «{title}»"}
+            return {"ok": True, "message": f"Время суток: {new_tod} — «{title}»"}
+        return {"ok": False, "message": "Не удалось обновить время суток."}
+    new_title = normalize_task_display(new_raw)
+    if new_title and new_title[0].isalpha():
+        new_title = new_title[0].upper() + new_title[1:]
+    updated = db.update_task(task["id"], user_id, text=new_title)
+    if updated:
+        return {"ok": True, "message": f"Задача обновлена: «{updated.get('text', new_title)}»"}
+    return {"ok": False, "message": "Не удалось изменить задачу."}
+
+
+def apply_reschedule_phrase(user_id: int, phrase: str) -> dict[str, Any]:
+    """Текст как в боте: «Перенеси задачу 3 на завтра»."""
+    from datetime import datetime
+
+    from bot_v2 import _resolve_task_by_num_or_search
+
+    num, search_text, due_date, due_time = extract_reschedule_target(phrase or "", today=datetime.now())
+    task = _resolve_task_by_num_or_search(user_id, num, search_text)
+    if task is None:
+        if num is not None:
+            return {"ok": False, "message": f"Нет задачи с номером {num}. Проверь номер в списке задач."}
+        return {"ok": False, "message": "Задача не найдена или несколько совпадений — укажи номер."}
+    if not due_date and not due_time:
+        return {
+            "ok": False,
+            "message": "Укажи новую дату или время после « на », например: на завтра, на пятницу в 10:00.",
+        }
+    updates = {}
+    if task.get("is_routine") and due_date:
+        try:
+            from datetime import datetime as _dt
+
+            wd = _dt.strptime(due_date, "%Y-%m-%d").weekday()
+            day_codes = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+            updates["repeat_day"] = day_codes[wd]
+        except Exception:
+            pass
+    if not task.get("is_routine"):
+        if due_date:
+            updates["due_date"] = due_date
+        if due_time:
+            updates["due_time"] = due_time
+    if not updates and due_date and task.get("is_routine"):
+        try:
+            from datetime import datetime as _dt
+
+            wd = _dt.strptime(due_date, "%Y-%m-%d").weekday()
+            day_codes = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+            updates["repeat_day"] = day_codes[wd]
+        except Exception:
+            pass
+    if not updates:
+        return {"ok": False, "message": "Не удалось определить новую дату. Попробуй: на завтра, на пятницу."}
+    updated = db.update_task(task["id"], user_id, **updates)
+    if updated:
+        if "repeat_day" in updates:
+            label = db.format_repeat_day_display(updates["repeat_day"])
+            return {"ok": True, "message": f"Рутина перенесена: «{task.get('text', '')}» — {label}"}
+        parts = [f"«{updated.get('text', task.get('text', ''))}»"]
+        if updates.get("due_date"):
+            parts.append(f"на {updates['due_date']}")
+        if updates.get("due_time"):
+            parts.append(f"в {updates['due_time']}")
+        return {"ok": True, "message": "Задача перенесена: " + " ".join(parts)}
+    return {"ok": False, "message": "Не удалось перенести задачу."}
+
+
+def uncomplete_done_today(user_id: int, num: int) -> dict[str, Any]:
+    """num — порядковый номер в списке «сделано сегодня» (как в боте), с 1."""
+    done_tasks = db.get_done_tasks_today(user_id)
+    if not done_tasks:
+        return {"ok": False, "message": "Сегодня нет выполненных задач."}
+    if not (1 <= num <= len(done_tasks)):
+        return {
+            "ok": False,
+            "message": f"Нет задачи с номером {num}. В списке выполненных сегодня от 1 до {len(done_tasks)}.",
+        }
+    task = done_tasks[num - 1]
+    if db.uncomplete_task(task["id"], user_id):
+        return {"ok": True, "message": f"Задача «{task.get('text', '')}» снова в активных."}
+    return {"ok": False, "message": "Не удалось отменить выполнение."}
+
+
+def parse_number_list(s: str) -> list[int]:
+    """Строка вида «1, 2, 3» или «1-3» → список номеров."""
+    import re
+
+    s = (s or "").strip()
+    if not s:
+        return []
+    out: list[int] = []
+    for part in re.split(r"[\s,;]+", s):
+        if not part:
+            continue
+        m = re.match(r"^(\d+)\s*-\s*(\d+)$", part)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            if a <= b:
+                out.extend(range(a, b + 1))
+            continue
+        if part.isdigit():
+            out.append(int(part))
+    return sorted(set(out))

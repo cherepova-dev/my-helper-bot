@@ -6,19 +6,33 @@
   <title>{% block title %}Помощник{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-  <header class="top">
-    <a href="/today" class="brand">Помощник</a>
-    <nav>
-      <a href="/today">Сегодня</a>
-      <a href="/tasks">Все задачи</a>
-      <a href="/reports/today">Сделано сегодня</a>
-      <a href="/reports/week">За неделю</a>
-      <a href="/logout">Выход</a>
-    </nav>
-  </header>
-  <main class="container">
-    {% block content %}{% endblock %}
-  </main>
+<body class="app-body">
+  <input type="checkbox" id="sidebar-toggle" class="sidebar-toggle" hidden>
+  <div class="app-layout">
+    <label for="sidebar-toggle" class="sidebar-backdrop" aria-hidden="true"></label>
+    <aside class="sidebar" aria-label="Навигация">
+      <a href="/today" class="sidebar-brand">Помощник</a>
+      <nav class="sidebar-nav">
+        <a href="/today">Сегодня</a>
+        <a href="/tasks">Все задачи</a>
+        <a href="/routines">Рутины</a>
+        <a href="/reports/today">Сделано сегодня</a>
+        <a href="/reports/week">За неделю</a>
+        <a href="/actions">Действия</a>
+        <a href="/help">Справка</a>
+      </nav>
+      <div class="sidebar-footer">
+        <a href="/logout" class="sidebar-logout">Выход</a>
+      </div>
+    </aside>
+    <div class="app-main">
+      <header class="topbar">
+        <label for="sidebar-toggle" class="burger">☰ Меню</label>
+      </header>
+      <main class="container">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
 </body>
 </html>

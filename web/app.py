@@ -8,14 +8,24 @@ import os
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
+import ai_module
 import db
-from task_commands import add_task_from_text, complete_task_numbers
+from bot_v2 import HELP_TEXT
+from task_commands import (
+    add_task_from_text,
+    apply_edit_phrase,
+    apply_reschedule_phrase,
+    complete_task_numbers,
+    delete_task_by_number,
+    parse_number_list,
+    uncomplete_done_today,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
@@ -214,6 +224,81 @@ async def page_report_today(request: Request):
     )
 
 
+@app.get("/help", response_class=HTMLResponse)
+async def page_help(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    return templates.TemplateResponse(
+        request,
+        "help.html",
+        _ctx(help_text=HELP_TEXT.replace("*", "")),
+    )
+
+
+@app.get("/routines", response_class=HTMLResponse)
+async def page_routines(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    from bot_v2 import _group_tasks_by_time_bucket
+
+    uid = get_user_row()["id"]
+    routine_tasks = db.get_routine_tasks(uid)
+    if not routine_tasks:
+        return templates.TemplateResponse(
+            request,
+            "routines.html",
+            _ctx(sections=[], empty=True),
+        )
+    _plain_bucket = {
+        "утро": "🌅 Утро",
+        "день": "☀️ День",
+        "вечер": "🌆 Вечер",
+        "ночь": "🌙 Ночь",
+    }
+    indexed = [(i, t) for i, t in enumerate(routine_tasks, start=1)]
+    sections: list[dict] = []
+    for bucket, group in _group_tasks_by_time_bucket(indexed):
+        title = _plain_bucket.get(bucket, "") if bucket else ""
+        rows = []
+        for num, t in group:
+            repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
+            emoji = t.get("category_emoji") or "🔁"
+            rows.append(
+                {
+                    "num": num,
+                    "emoji": emoji,
+                    "text": t["text"],
+                    "repeat_label": repeat_label,
+                }
+            )
+        sections.append({"bucket_title": title, "rows": rows, "bucket": bucket})
+    return templates.TemplateResponse(
+        request,
+        "routines.html",
+        _ctx(sections=sections, empty=False),
+    )
+
+
+@app.get("/actions", response_class=HTMLResponse)
+async def page_actions(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    done = db.get_done_tasks_today(uid)
+    done_items = [{"text": t.get("text", "")} for t in done]
+    flash_msg = request.session.pop("flash_msg", None)
+    flash_kind = request.session.pop("flash_kind", "ok")
+    return templates.TemplateResponse(
+        request,
+        "actions.html",
+        _ctx(
+            done_items=done_items,
+            flash_msg=flash_msg,
+            flash_kind=flash_kind if flash_msg else "ok",
+        ),
+    )
+
+
 @app.get("/reports/week", response_class=HTMLResponse)
 async def page_report_week(request: Request):
     if not request.session.get("auth"):
@@ -266,6 +351,111 @@ async def action_complete(request: Request):
     if ok_titles and fail:
         return RedirectResponse(f"{dest}?done={len(ok_titles)}&fail={len(fail)}", status_code=302)
     return RedirectResponse(f"{dest}?err=complete", status_code=302)
+
+
+def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> RedirectResponse:
+    path = dest.split("?", 1)[0]
+    if path.rstrip("/") == "/actions":
+        request.session["flash_msg"] = message
+        request.session["flash_kind"] = "ok" if ok else "err"
+    return RedirectResponse(dest, status_code=302)
+
+
+@app.post("/tasks/complete_quick")
+async def action_complete_quick(request: Request, nums: str = Form("")):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    parsed = parse_number_list(nums)
+    dest = request.query_params.get("next", "/today")
+    if not parsed:
+        if dest.startswith("/actions"):
+            request.session["flash_msg"] = "Укажи номера, например: 1, 2, 3"
+            request.session["flash_kind"] = "err"
+        return RedirectResponse(dest + ("?err=complete" if not dest.startswith("/actions") else ""), status_code=302)
+    ok_titles, fail = complete_task_numbers(uid, parsed)
+    if dest.startswith("/actions"):
+        if ok_titles and not fail:
+            request.session["flash_msg"] = f"Отмечено выполненным: {len(ok_titles)}."
+            request.session["flash_kind"] = "ok"
+        elif ok_titles and fail:
+            request.session["flash_msg"] = f"Частично: {len(ok_titles)} ок, номера с ошибкой: {fail}."
+            request.session["flash_kind"] = "err"
+        else:
+            request.session["flash_msg"] = f"Не удалось отметить номера: {fail}."
+            request.session["flash_kind"] = "err"
+        return RedirectResponse(dest, status_code=302)
+    if ok_titles and not fail:
+        return RedirectResponse(f"{dest}?done={len(ok_titles)}", status_code=302)
+    if ok_titles and fail:
+        return RedirectResponse(f"{dest}?done={len(ok_titles)}&fail={len(fail)}", status_code=302)
+    return RedirectResponse(f"{dest}?err=complete", status_code=302)
+
+
+@app.post("/tasks/delete")
+async def action_delete(request: Request, num: int = Form(...), kind: str = Form("task")):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    is_routine = kind.strip().lower() == "routine"
+    result = delete_task_by_number(uid, num, is_routine)
+    dest = request.query_params.get("next", "/actions")
+    return _flash_redirect(request, dest, result["message"], result["ok"])
+
+
+@app.post("/tasks/edit")
+async def action_edit(request: Request, phrase: str = Form("")):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = apply_edit_phrase(uid, phrase)
+    dest = request.query_params.get("next", "/actions")
+    return _flash_redirect(request, dest, result["message"], result["ok"])
+
+
+@app.post("/tasks/reschedule")
+async def action_reschedule(request: Request, phrase: str = Form("")):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = apply_reschedule_phrase(uid, phrase)
+    dest = request.query_params.get("next", "/actions")
+    return _flash_redirect(request, dest, result["message"], result["ok"])
+
+
+@app.post("/tasks/uncomplete")
+async def action_uncomplete(request: Request, num: int = Form(...)):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = uncomplete_done_today(uid, num)
+    dest = request.query_params.get("next", "/actions")
+    return _flash_redirect(request, dest, result["message"], result["ok"])
+
+
+@app.post("/tasks/voice")
+async def action_voice(request: Request, file: UploadFile = File(...)):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    dest = request.query_params.get("next", "/actions")
+    body = await file.read()
+    if not body:
+        return _flash_redirect(request, dest, "Пустой файл.", False)
+    raw_name = file.filename or ""
+    suf = Path(raw_name).suffix.lower()
+    if suf not in (".ogg", ".oga", ".webm", ".wav", ".mp3", ".m4a", ".mp4"):
+        suf = ".webm"
+    text = ai_module.transcribe_voice(body, suffix=suf)
+    if not text:
+        return _flash_redirect(
+            request,
+            dest,
+            "Не удалось распознать речь (проверьте ключ API и формат аудио).",
+            False,
+        )
+    user_row = get_user_row()
+    result = add_task_from_text(user_row, text)
+    return _flash_redirect(request, dest, result["message"], result["ok"])
 
 
 # Статика

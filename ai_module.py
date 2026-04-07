@@ -40,12 +40,14 @@ def _get_client() -> OpenAI:
     return _client
 
 
-def transcribe_voice(voice_bytes: bytes) -> str | None:
-    """Распознаёт голосовое сообщение (OGG) через Whisper API (Groq)."""
+def transcribe_voice(voice_bytes: bytes, suffix: str = ".ogg") -> str | None:
+    """Распознаёт голосовое сообщение через Whisper API (Groq). suffix — расширение временного файла (ogg, webm, wav…)."""
+    if not suffix or not suffix.startswith("."):
+        suffix = ".ogg"
     tmp_path = None
     try:
         client = _get_client()
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(voice_bytes)
             tmp_path = f.name
 

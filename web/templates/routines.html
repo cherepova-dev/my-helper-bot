@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Рутины{% endblock %}
+{% block content %}
+<h1>Рутины</h1>
+{% if empty %}
+<p class="muted">Пока нет рутин. Добавь на странице «Сегодня», например: «Ежедневная зарядка», «Поливать цветы каждый четверг».</p>
+{% else %}
+{% for sec in sections %}
+  {% if sec.bucket_title %}
+  <h2 class="bucket">{{ sec.bucket_title }}</h2>
+  {% endif %}
+  <ul class="task-list routine-list">
+    {% for row in sec.rows %}
+    <li>
+      <span class="num">{{ row.num }}.</span>
+      <span class="emoji">{{ row.emoji }}</span>
+      <span class="txt">{{ row.text }} <span class="muted">— {{ row.repeat_label }}</span></span>
+    </li>
+    {% endfor %}
+  </ul>
+{% endfor %}
+{% endif %}
+{% endblock %}

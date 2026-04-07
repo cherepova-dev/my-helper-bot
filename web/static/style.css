@@ -17,24 +17,104 @@ body {
   line-height: 1.45;
 }
 
-.top {
+/* ——— App shell: боковое меню + контент ——— */
+.app-body { margin: 0; min-height: 100vh; }
+.app-layout {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
+  min-height: 100vh;
+  align-items: stretch;
 }
-.brand { font-weight: 700; color: var(--fg); text-decoration: none; }
-nav a {
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  padding: 1rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  z-index: 101;
+}
+.sidebar-brand {
+  font-weight: 700;
+  color: var(--fg);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem 0.75rem;
+  display: block;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+}
+.sidebar-nav a {
   color: var(--muted);
   text-decoration: none;
-  margin-right: 0.75rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
 }
-nav a:hover { color: var(--accent); }
+.sidebar-nav a:hover { color: var(--accent); background: rgba(29, 155, 240, 0.08); }
+.sidebar-footer { padding-top: 0.75rem; border-top: 1px solid var(--border); margin-top: 0.5rem; }
+.sidebar-logout { color: var(--muted); font-size: 0.9rem; padding: 0.35rem 0.5rem; display: inline-block; }
+.sidebar-logout:hover { color: var(--err); }
 
-.container { max-width: 42rem; margin: 0 auto; padding: 1rem 1rem 2rem; }
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.topbar {
+  display: none;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  flex-shrink: 0;
+}
+.burger {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg);
+  user-select: none;
+}
+.sidebar-toggle { position: absolute; opacity: 0; pointer-events: none; }
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 99;
+}
+
+@media (max-width: 768px) {
+  .topbar { display: flex; }
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
+  }
+  #sidebar-toggle:checked ~ .app-layout .sidebar {
+    transform: translateX(0);
+  }
+  #sidebar-toggle:checked ~ .app-layout .sidebar-backdrop {
+    display: block;
+  }
+}
+
+@media (min-width: 769px) {
+  .sidebar {
+    position: relative;
+    transform: none !important;
+  }
+  .sidebar-backdrop { display: none !important; }
+}
+
+.container { max-width: 42rem; margin: 0 auto; padding: 1rem 1rem 2rem; width: 100%; }
 
 h1 { font-size: 1.35rem; margin-top: 0; }
 h2.bucket { font-size: 1rem; color: var(--accent); margin: 1.25rem 0 0.5rem; }
@@ -108,3 +188,65 @@ pre.task-dump, pre.report {
   color: var(--fg);
 }
 .login-box .error { color: var(--err); font-size: 0.9rem; }
+
+.help-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.action-section {
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.action-section:last-of-type { border-bottom: none; }
+.action-section h2 { font-size: 1.05rem; margin: 0 0 0.5rem; color: var(--accent); }
+
+.stack-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  align-items: flex-start;
+  max-width: 28rem;
+}
+.stack-form textarea {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #000;
+  color: var(--fg);
+  font: inherit;
+}
+.stack-form input[type="number"] {
+  width: 6rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #000;
+  color: var(--fg);
+}
+.stack-form label { display: block; }
+.radio-row { display: flex; align-items: center; gap: 0.35rem; font-weight: normal; }
+
+.routine-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.done-mini {
+  margin: 0 0 0.75rem 1.1rem;
+  padding: 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+.done-mini li { margin: 0.2rem 0; }
