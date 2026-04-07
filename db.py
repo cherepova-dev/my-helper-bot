@@ -308,6 +308,29 @@ def get_user_by_tg(telegram_id: int) -> dict | None:
     return _fetchone("SELECT * FROM users WHERE telegram_id = %s", (telegram_id,))
 
 
+def get_user_by_id(user_id: int) -> dict | None:
+    """Пользователь по внутреннему id (для веб-входа по WEB_INTERNAL_USER_ID)."""
+    return _fetchone("SELECT * FROM users WHERE id = %s", (user_id,))
+
+
+def get_single_user_if_exactly_one() -> dict | None:
+    """Если в таблице users ровно одна запись — вернуть её (для веба без WEB_INTERNAL_USER_ID)."""
+    rows = _fetchall("SELECT * FROM users ORDER BY id")
+    if len(rows) == 1:
+        return rows[0]
+    return None
+
+
+def count_users() -> int:
+    row = _fetchone("SELECT COUNT(*) AS c FROM users")
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
+def list_user_ids() -> list[int]:
+    rows = _fetchall("SELECT id FROM users ORDER BY id")
+    return [int(r["id"]) for r in rows]
+
+
 def increment_tips(telegram_id: int) -> int:
     _execute("UPDATE users SET tips_shown = tips_shown + 1 WHERE telegram_id = %s", (telegram_id,))
     row = _fetchone("SELECT tips_shown FROM users WHERE telegram_id = %s", (telegram_id,))

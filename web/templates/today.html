@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Сегодня{% endblock %}
+{% block content %}
+<h1>План на сегодня</h1>
+
+{% if request.query_params.get('ok') %}
+<p class="flash ok">Задача добавлена.</p>
+{% endif %}
+{% if request.query_params.get('err') == 'add' %}
+<p class="flash err">Не удалось добавить задачу.</p>
+{% endif %}
+{% if request.query_params.get('done') %}
+<p class="flash ok">Отмечено выполненным: {{ request.query_params.get('done') }}.</p>
+{% endif %}
+{% if request.query_params.get('err') == 'complete' %}
+<p class="flash err">Выбери задачи или проверь номера.</p>
+{% endif %}
+
+<section class="add-bar">
+  <form method="post" action="/tasks/add?next=/today" class="inline-form">
+    <input type="text" name="text" placeholder="Новая задача или рутина…" required>
+    <button type="submit">Добавить</button>
+  </form>
+</section>
+
+{% if empty %}
+<p class="muted">На сегодня задач нет.</p>
+{% else %}
+<form method="post" action="/tasks/complete?next=/today" class="task-form">
+  {% for sec in sections %}
+    {% if sec.bucket_title %}
+    <h2 class="bucket">{{ sec.bucket_title }}</h2>
+    {% endif %}
+    <ul class="task-list">
+      {% for row in sec.rows %}
+      <li>
+        <label>
+          <input type="checkbox" name="num" value="{{ row.num }}">
+          <span class="num">{{ row.num }}.</span>
+          <span class="emoji">{{ row.emoji }}</span>
+          <span class="txt">{{ row.text }}{{ row.time_part }}</span>
+        </label>
+      </li>
+      {% endfor %}
+    </ul>
+  {% endfor %}
+  <button type="submit" class="primary">Отметить выполненным</button>
+</form>
+{% endif %}
+{% endblock %}

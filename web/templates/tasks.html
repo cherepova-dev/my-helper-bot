@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Все задачи{% endblock %}
+{% block content %}
+<h1>Все задачи</h1>
+{% if empty %}
+<p class="muted">Нет активных задач.</p>
+{% else %}
+<pre class="task-dump">{{ list_markdown }}</pre>
+{% endif %}
+{% endblock %}

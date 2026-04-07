@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Помощник{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <a href="/today" class="brand">Помощник</a>
+    <nav>
+      <a href="/today">Сегодня</a>
+      <a href="/tasks">Все задачи</a>
+      <a href="/reports/today">Сделано сегодня</a>
+      <a href="/reports/week">За неделю</a>
+      <a href="/logout">Выход</a>
+    </nav>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

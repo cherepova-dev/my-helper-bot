@@ -4,11 +4,17 @@ services:
     name: my-helper-bot
     plan: free
     buildCommand: pip install -r requirements-render.txt
-    startCommand: python bot_replit.py
+    # Веб-интерфейс (FastAPI). Переменные WEB_* и DATABASE_URL — в панели Render.
+    startCommand: uvicorn web.app:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: TELEGRAM_BOT_TOKEN
+      - key: DATABASE_URL
+        sync: false
+      - key: WEB_APP_PASSWORD
+        sync: false
+      - key: WEB_SESSION_SECRET
+        sync: false
+      # Необязательно: если в users одна строка — id подставится сам. Иначе укажи вручную.
+      - key: WEB_INTERNAL_USER_ID
         sync: false
       - key: GROQ_API_KEY
-        sync: false
-      - key: DATABASE_URL
         sync: false
