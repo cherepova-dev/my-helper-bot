@@ -25,6 +25,8 @@ from bot_v2 import (
     _format_done_report_today,
     _format_done_report_week,
     _extract_uncomplete_number,
+    _group_tasks_by_time_bucket,
+    _task_time_bucket,
 )
 
 
@@ -261,6 +263,30 @@ class TestFormatDoneReportWeek:
         result = _format_done_report_week([], "Europe/Moscow")
         assert "Сделано за неделю" in result
         assert "7 дней" in result or "ни одной" in result
+
+
+class TestTaskTimeBucket:
+    """Блок суток: при наличии due_time ориентируемся на час, а не на устаревшее time_of_day."""
+
+    def test_due_time_overrides_time_of_day(self):
+        t = {"time_of_day": "утро", "due_time": "14:30", "id": 1}
+        assert _task_time_bucket(t) == "день"
+
+    def test_twelve_is_day_not_morning(self):
+        assert _task_time_bucket({"due_time": "12:00", "id": 1}) == "день"
+
+    def test_without_due_time_uses_time_of_day(self):
+        assert _task_time_bucket({"time_of_day": "вечер", "due_time": None, "id": 1}) == "вечер"
+
+    def test_group_sorts_timed_before_untimed(self):
+        pairs = [
+            (1, {"id": 10, "text": "без времени", "due_time": None, "time_of_day": "утро"}),
+            (2, {"id": 11, "text": "в 09:00", "due_time": "09:00"}),
+            (3, {"id": 12, "text": "в 11:00", "due_time": "11:00"}),
+        ]
+        by_bucket = {b: pr for b, pr in _group_tasks_by_time_bucket(pairs)}
+        nums = [p[0] for p in by_bucket["утро"]]
+        assert nums == [2, 3, 1]
 
 
 class TestExtractUncompleteNumber:

@@ -113,12 +113,21 @@ def _init_tables_pg() -> None:
     CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
     CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id);
     CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id);
+    CREATE TABLE IF NOT EXISTS projects (
+        id              SERIAL PRIMARY KEY,
+        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title           TEXT NOT NULL,
+        emoji           TEXT DEFAULT '📁',
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
     """)
     for col_sql in (
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
         "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
         "ALTER TABLE tasks ADD COLUMN last_completed_at TIMESTAMPTZ",
         "ALTER TABLE categories ADD COLUMN keywords TEXT DEFAULT ''",
+        "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
     ):
         try:
             cur.execute(col_sql)
@@ -174,6 +183,14 @@ def _init_tables_sqlite() -> None:
         text        TEXT NOT NULL,
         created_at  TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS projects (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         INTEGER NOT NULL REFERENCES users(id),
+        title           TEXT NOT NULL,
+        emoji           TEXT DEFAULT '📁',
+        created_at      TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
     """)
     _conn.commit()
     for col_sql in (
@@ -181,6 +198,7 @@ def _init_tables_sqlite() -> None:
         "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
         "ALTER TABLE tasks ADD COLUMN last_completed_at TEXT",
         "ALTER TABLE categories ADD COLUMN keywords TEXT DEFAULT ''",
+        "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
     ):
         try:
             _conn.execute(col_sql)
@@ -471,6 +489,87 @@ def delete_category_row(user_id: int, category_id: int) -> bool:
     return n > 0
 
 
+# ── Projects ─────────────────────────────────────────────────────────────
+
+def list_projects(user_id: int) -> list[dict]:
+    return _fetchall("SELECT * FROM projects WHERE user_id = %s ORDER BY id DESC", (user_id,))
+
+
+def get_project(user_id: int, project_id: int) -> dict | None:
+    return _fetchone(
+        "SELECT * FROM projects WHERE id = %s AND user_id = %s",
+        (project_id, user_id),
+    )
+
+
+def create_project(user_id: int, title: str, emoji: str = "📁") -> dict | None:
+    t = (title or "").strip()
+    if not t:
+        return None
+    em = (emoji or "📁").strip() or "📁"
+    return _insert_returning(
+        "INSERT INTO projects (user_id, title, emoji) VALUES (%s, %s, %s) RETURNING *",
+        (user_id, t, em),
+    )
+
+
+def delete_project(user_id: int, project_id: int) -> bool:
+    if not get_project(user_id, project_id):
+        return False
+    _execute(
+        "UPDATE tasks SET project_id = NULL WHERE user_id = %s AND project_id = %s",
+        (user_id, project_id),
+    )
+    n = _execute("DELETE FROM projects WHERE id = %s AND user_id = %s", (project_id, user_id))
+    return n > 0
+
+
+def count_active_tasks_in_project(user_id: int, project_id: int) -> int:
+    row = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'active'",
+        (user_id, project_id),
+    )
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
+def get_active_tasks_for_project(user_id: int, project_id: int) -> list[dict]:
+    return _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'active' "
+        "ORDER BY COALESCE(CAST(due_date AS TEXT), '9999-12-31'), COALESCE(CAST(due_time AS TEXT), ''), id",
+        (user_id, project_id),
+    )
+
+
+def get_project_meta_map(user_id: int) -> dict[int, dict]:
+    rows = _fetchall("SELECT id, title, emoji FROM projects WHERE user_id = %s", (user_id,))
+    out: dict[int, dict] = {}
+    for r in rows:
+        try:
+            out[int(r["id"])] = r
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def attach_project_labels(user_id: int, tasks: list[dict]) -> None:
+    """Дополняет задачи полями project_title и project_emoji (in-place)."""
+    if not tasks:
+        return
+    pmap = get_project_meta_map(user_id)
+    for t in tasks:
+        pid = t.get("project_id")
+        if pid is None:
+            continue
+        try:
+            pk = int(pid)
+        except (TypeError, ValueError):
+            continue
+        meta = pmap.get(pk)
+        if meta:
+            t["project_title"] = meta["title"]
+            t["project_emoji"] = (meta.get("emoji") or "📁").strip() or "📁"
+
+
 # ── Tasks ────────────────────────────────────────────────────────────────
 
 def add_task(
@@ -487,6 +586,7 @@ def add_task(
     priority_size: float = 5,
     is_routine: bool = False,
     repeat_day: str | None = None,
+    project_id: int | None = None,
 ) -> dict:
     logger.info("add_task: text='%s' is_routine=%s repeat_day=%s due_date=%s",
                 text[:40], is_routine, repeat_day, due_date)
@@ -508,13 +608,13 @@ def add_task(
            (user_id, text, category_emoji, category_name,
             due_date, due_time, time_of_day,
             priority_value, priority_urgency, priority_risk, priority_size, priority_score,
-            is_routine, repeat_day)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            is_routine, repeat_day, project_id)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            RETURNING *""",
         (user_id, text, category_emoji, category_name,
          due_date, due_time, time_of_day,
          priority_value, priority_urgency, priority_risk, priority_size, score,
-         is_routine, repeat_day),
+         is_routine, repeat_day, project_id),
     )
     if result:
         logger.info("add_task OK: id=%s is_routine=%s", result.get("id"), result.get("is_routine"))
@@ -939,6 +1039,7 @@ def update_task(task_id: int, user_id: int, **kwargs) -> dict | None:
         "category_emoji", "category_name",
         "priority_value", "priority_urgency", "priority_risk", "priority_size",
         "is_routine", "repeat_day",
+        "project_id",
     }
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:

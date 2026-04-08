@@ -22,6 +22,11 @@
     <span class="dash-card-value">{{ n_tasks }}</span>
     <span class="dash-card-hint">активных</span>
   </a>
+  <a href="/projects" class="dash-card">
+    <span class="dash-card-kicker">Проекты</span>
+    <span class="dash-card-value">{{ n_projects }}</span>
+    <span class="dash-card-hint">активных</span>
+  </a>
   <a href="/routines" class="dash-card">
     <span class="dash-card-kicker">Рутины</span>
     <span class="dash-card-value">{{ n_routines }}</span>
@@ -48,10 +53,18 @@
   <p class="home-more"><a href="/help#job-2">Подробнее в справке →</a></p>
 </section>
 
+<section class="card home-job-block" id="job-3-preview">
+  <h2 class="home-section-title">Задача №3 — «{{ job_3_title }}»</h2>
+  <p class="muted">{{ job_3_short }}</p>
+  <p>{{ job_3_how }}</p>
+  <p class="home-more"><a href="/help#job-3">Подробнее в справке →</a> · <a href="/projects">Проекты →</a></p>
+</section>
+
 <section class="home-actions card">
   <h2 class="home-section-title">Разделы</h2>
   <ul class="home-link-list">
     <li><a href="/today">Сегодня</a> — отметить выполненное</li>
+    <li><a href="/projects">Проекты</a> — большие дела по шагам</li>
     <li><a href="/actions">Действия</a> — сложные правки</li>
     <li><a href="/reports/week">Неделя</a></li>
   </ul>

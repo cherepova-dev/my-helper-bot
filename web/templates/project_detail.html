@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }}{% endblock %}
+{% block top_title %}Проект{% endblock %}
+{% block content %}
+<nav class="toolbar-sub" aria-label="К проектам">
+  <a href="/projects" class="muted">← Все проекты</a>
+</nav>
+<h1 class="page-heading"><span class="project-heading-emoji">{{ project.emoji or "📁" }}</span> {{ project.title }}</h1>
+<p class="muted">Добавь шаг — срок подставится как у обычной задачи (можно написать «завтра» в тексте). Управление — меню ⋯ в строке.</p>
+
+<section class="card">
+  <h2 class="home-section-title">Новая задача в проекте</h2>
+  <form method="post" action="/projects/{{ project_id }}/add_task" class="stack-form">
+    <label class="field-label" for="ptext">Текст задачи</label>
+    <input id="ptext" name="text" type="text" required maxlength="500" autocomplete="off" placeholder="Например: Заказать ламинат">
+    <button type="submit" class="btn-primary">Добавить</button>
+  </form>
+</section>
+
+{% if empty %}
+<p class="muted">В проекте пока нет активных задач.</p>
+{% else %}
+<div class="task-page-sections">
+  <section class="task-date-section">
+    <h2 class="task-section-heading">Шаги проекта</h2>
+    <ul class="task-list task-list--compact">
+      {% for row in rows %}
+      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="0">
+        <div class="task-line-row task-line-row--list">
+          <div class="task-num-emoji task-num-emoji--static" draggable="false">
+            <span class="num">{{ row.num }}.</span>
+            <span class="emoji">{{ row.emoji }}</span>
+          </div>
+          <div class="task-line-center">
+            <div class="task-title-line">
+              <span class="task-text-display">{{ row.text }}</span>
+              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
+              <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}</span>
+            </div>
+          </div>
+          {% include "partials/task_kebab.html" %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endif %}
+
+<section class="card project-danger-zone">
+  <h2 class="home-section-title">Удалить проект</h2>
+  <p class="muted">Задачи не пропадут — у них снимется привязка к проекту.</p>
+  <form method="post" action="/projects/{{ project_id }}/delete" onsubmit="return confirm('Удалить этот проект? Задачи останутся в списке.');">
+    <button type="submit" class="btn-danger-outline">Удалить проект</button>
+  </form>
+</section>
+{% endblock %}

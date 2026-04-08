@@ -15,7 +15,10 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("WEB_APP_PASSWORD", "test-secret")
     monkeypatch.setenv("WEB_SESSION_SECRET", "x" * 32)
     monkeypatch.setenv("BOT_DB_PATH", str(tmp_path / "t.db"))
-    os.environ.pop("DATABASE_URL", None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    # Иначе второй тест держит старый db.py с чужим путём/PostgreSQL.
+    sys.modules.pop("web.app", None)
+    sys.modules.pop("db", None)
     from web.app import app as fastapi_app
 
     return TestClient(fastapi_app)
@@ -44,3 +47,11 @@ def test_home_after_login(client):
     r = client.get("/")
     assert r.status_code == 200
     assert "Что делаем" in r.text or "Главная" in r.text
+
+
+def test_projects_page_after_login(client):
+    client.post("/login", data={"password": "test-secret"})
+    r = client.get("/projects")
+    assert r.status_code == 200
+    assert "Проекты" in r.text
+    assert "Новый проект" in r.text

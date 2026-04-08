@@ -115,6 +115,96 @@ def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
         return {"ok": False, "message": "Ошибка при сохранении задачи."}
 
 
+def add_project_task_from_text(
+    user_row: dict, project_id: int, task_text: str
+) -> dict[str, Any]:
+    """
+    Добавляет обычную задачу внутри проекта. Рутины в проект не кладём.
+    Срок: из текста, иначе при включённом авторасписании — как у обычных задач, иначе сегодня (в TZ пользователя).
+    """
+    if not task_text or not task_text.strip():
+        return {"ok": False, "message": "Текст задачи пустой."}
+
+    task_text = task_text.strip()
+    internal_user_id = user_row["id"]
+    if not db.get_project(internal_user_id, project_id):
+        return {"ok": False, "message": "Проект не найден."}
+
+    settings = db.get_settings(internal_user_id)
+    is_routine, repeat_day = routines.is_routine_and_repeat(task_text)
+    if is_routine:
+        return {
+            "ok": False,
+            "message": "Рутины в проект не добавляются — создай рутину отдельно.",
+        }
+
+    due_date = _parse_due_date_with_today(task_text)
+    due_time = parse_due_time(task_text)
+    time_of_day_val = infer_time_of_day(task_text)
+    if not time_of_day_val and due_time:
+        try:
+            h = int(str(due_time).split(":", 1)[0])
+            time_of_day_val = time_of_day_from_hour(h)
+        except (ValueError, IndexError):
+            time_of_day_val = None
+
+    task_title = (clean_task_text_from_datetime(task_text) or task_text).strip()
+    if task_title:
+        task_title = normalize_task_display(task_title)
+
+    _raw_for_cat = (clean_task_text_from_datetime(task_text) or task_text).strip()
+    category_emoji, category_name = assign_category(_raw_for_cat, user_row["id"])
+
+    today_str, _ = db._get_today_in_user_tz(internal_user_id)
+    if due_date:
+        lower = task_text.lower()
+        if "сегодня" in lower:
+            date_label = "сегодня"
+        elif "завтра" in lower and "послезавтра" not in lower:
+            date_label = "завтра"
+        elif "послезавтра" in lower:
+            date_label = "послезавтра"
+        else:
+            date_label = due_date
+    elif settings.get("auto_schedule", True):
+        from bot_v2 import _auto_schedule_date
+
+        due_date, date_label = _auto_schedule_date(internal_user_id)
+    else:
+        due_date = today_str
+        date_label = "сегодня"
+
+    try:
+        task_row = db.add_task(
+            user_id=internal_user_id,
+            text=task_title,
+            category_emoji=category_emoji,
+            category_name=category_name,
+            due_date=due_date,
+            due_time=due_time,
+            time_of_day=time_of_day_val,
+            priority_value=5,
+            priority_urgency=5,
+            priority_risk=5,
+            priority_size=5,
+            is_routine=False,
+            repeat_day=None,
+            project_id=project_id,
+        )
+        if not task_row:
+            return {"ok": False, "message": "Не удалось сохранить задачу."}
+        msg = (
+            f"Задача в проекте: «{task_title}». Категория: {category_emoji} {category_name}. "
+            f"Срок: {date_label}."
+        )
+        if time_of_day_val:
+            msg += f" Время суток: {time_of_day_val}."
+        return {"ok": True, "message": msg.strip()}
+    except Exception as e:
+        logger.exception("add_project_task_from_text: %s", e)
+        return {"ok": False, "message": "Ошибка при сохранении задачи."}
+
+
 def complete_task_numbers(user_id: int, nums: list[int]) -> tuple[list[str], list[int]]:
     """
     Отмечает выполненными задачи по глобальным номерам (как в списке задач).

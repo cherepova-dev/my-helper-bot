@@ -24,7 +24,7 @@
             <div class="task-title-line">
               <span class="task-text-display">{{ row.text }}</span>
               <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
-              <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}</span>
+              <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}{% if row.project_label %} · {{ row.project_label }}{% endif %}</span>
             </div>
           </div>
           {% include "partials/task_kebab.html" %}

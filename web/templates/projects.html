@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Проекты{% endblock %}
+{% block top_title %}Проекты{% endblock %}
+{% block content %}
+<h1 class="page-heading">Проекты</h1>
+<p class="muted">Большое дело — несколько шагов. Задачи из проекта видны в «Сегодня» и «Все задачи» с пометкой проекта.</p>
+
+<section class="card">
+  <h2 class="home-section-title">Новый проект</h2>
+  <form method="post" action="/projects/create" class="stack-form">
+    <label class="field-label" for="proj-title">Название</label>
+    <input id="proj-title" name="title" type="text" required maxlength="200" autocomplete="off" placeholder="Например: Ремонт в подвале">
+    <label class="field-label" for="proj-emoji">Эмодзи (необязательно)</label>
+    <input id="proj-emoji" name="emoji" type="text" value="📁" maxlength="8" class="input-narrow" aria-label="Эмодзи проекта">
+    <button type="submit" class="btn-primary">Создать</button>
+  </form>
+</section>
+
+{% if empty %}
+<p class="muted">Пока нет проектов — создай первый выше.</p>
+{% else %}
+<section class="card card--flush">
+  <h2 class="home-section-title">Список</h2>
+  <ul class="project-list">
+    {% for p in projects %}
+    <li class="project-list-item">
+      <a href="/projects/{{ p.id }}" class="project-list-link">
+        <span class="project-list-emoji">{{ p.emoji }}</span>
+        <span class="project-list-title">{{ p.title }}</span>
+        <span class="muted project-list-meta">{{ p.n_active }} активн.</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

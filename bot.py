@@ -161,7 +161,7 @@ def _format_task_list(tasks: list[dict]) -> str:
             elif t.get("time_of_day"):
                 extra_parts.append(t["time_of_day"])
             extra = f" — _{', '.join(extra_parts)}_" if extra_parts else ""
-            line = f"☐ {emoji} {text}{extra}"
+            line = f"{emoji} {text}{extra}"
             key = f"{emoji} *{cat}*"
             groups.setdefault(key, []).append(line)
 
@@ -178,7 +178,7 @@ def _format_task_list(tasks: list[dict]) -> str:
             text = t["text"]
             day = t.get("repeat_day") or ""
             day_str = f" — _каждый {day}_" if day else ""
-            lines.append(f"☐ {emoji} {text}{day_str}")
+            lines.append(f"{emoji} {text}{day_str}")
         lines.append("")
 
     return "\n".join(lines)
@@ -204,14 +204,14 @@ def _format_routines(tasks: list[dict]) -> str:
         repeat = (t.get("repeat_day") or "").strip()
 
         if not repeat:
-            no_day.append(f"☐ {emoji} {text}")
+            no_day.append(f"{emoji} {text}")
             continue
 
         days = [d.strip() for d in repeat.split(",")]
         for day in days:
             day_lower = day.lower()
             key = day_lower if day_lower in DAY_ORDER else "другое"
-            line = f"☐ {emoji} {text}"
+            line = f"{emoji} {text}"
             by_day.setdefault(key, []).append(line)
 
     lines = ["🔁 *Рутины*\n"]
@@ -317,17 +317,25 @@ def _build_overload_hint(user_id: int, assigned_date: str, date_label: str) -> s
     return hint
 
 
-def _format_today_tasks(tasks: list[dict]) -> str:
+def _format_today_tasks(tasks: list[dict], user_id: int | None = None) -> str:
     if not tasks:
         return "📅 _На сегодня задач нет. Свободный день или напиши новую задачу!_"
 
-    now = datetime.now()
-    date_str = now.strftime("%d.%m")
     months_ru = {
         1: "января", 2: "февраля", 3: "марта", 4: "апреля",
         5: "мая", 6: "июня", 7: "июля", 8: "августа",
         9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
     }
+    if user_id:
+        try:
+            from zoneinfo import ZoneInfo
+            tz_name = db.get_user_timezone(user_id)
+            tz = ZoneInfo(tz_name)
+            now = datetime.now(tz)
+        except Exception:
+            now = datetime.now()
+    else:
+        now = datetime.now()
     month_name = months_ru.get(now.month, "")
 
     urgent, normal, evening, routine, projects = [], [], [], [], []
@@ -337,7 +345,7 @@ def _format_today_tasks(tasks: list[dict]) -> str:
         time_str = ""
         if t.get("due_time"):
             time_str = f" ⏰ {t['due_time']}"
-        line = f"☐ {emoji} {text}{time_str}"
+        line = f"{emoji} {text}{time_str}"
 
         is_routine = t.get("is_routine", False)
         tod = (t.get("time_of_day") or "").lower()
@@ -356,6 +364,7 @@ def _format_today_tasks(tasks: list[dict]) -> str:
             normal.append(line)
 
     lines = [f"📅 *Сегодня, {now.day} {month_name} — план дня*\n"]
+    del months_ru  # не нужен дальше
 
     if urgent:
         lines.append("🔥 *Срочно*")
@@ -380,7 +389,7 @@ def _format_today_tasks(tasks: list[dict]) -> str:
 
     total = len(tasks)
     if total > 0 and urgent:
-        first_urgent = urgent[0].replace("☐ ", "").split(" ", 1)[-1].split(" ⏰")[0]
+        first_urgent = urgent[0].split(" ", 1)[-1].split(" ⏰")[0]
         lines.append(f"_У тебя сегодня {total} задач. Самая срочная — {first_urgent}. Может, начнёшь с неё?_")
 
     return "\n".join(lines)
@@ -479,7 +488,7 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_row = db.get_or_create_user(update.effective_user.id)
     tasks = db.get_today_tasks(user_row["id"])
     logger.info("/today: user=%s tasks=%d", user_row["id"], len(tasks))
-    await _reply(update, _format_today_tasks(tasks))
+    await _reply(update, _format_today_tasks(tasks, user_row["id"]))
 
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

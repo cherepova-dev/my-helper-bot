@@ -27,10 +27,14 @@ from web.web_copy import (
     JOB_2_HOW,
     JOB_2_SHORT,
     JOB_2_TITLE,
+    JOB_3_HOW,
+    JOB_3_SHORT,
+    JOB_3_TITLE,
     PING_HELP_HTML,
 )
 from categories import builtin_keywords_for_name, keywords_text_to_json
 from task_commands import (
+    add_project_task_from_text,
     add_task_from_text,
     apply_edit_phrase,
     apply_reschedule_phrase,
@@ -240,8 +244,18 @@ _FLASH_PATHS = frozenset(
         "/help",
         "/reports/today",
         "/reports/week",
+        "/projects",
     }
 )
+
+
+def _flash_allowed(path: str) -> bool:
+    if path in _FLASH_PATHS:
+        return True
+    if path.startswith("/projects/"):
+        first = path[len("/projects/") :].strip("/").split("/")[0]
+        return bool(first) and first.isdigit()
+    return False
 
 
 def _category_choices(uid: int) -> list[dict]:
@@ -283,7 +297,7 @@ def _category_edit_rows(uid: int) -> list[dict]:
 
 def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> RedirectResponse:
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    if path in _FLASH_PATHS:
+    if _flash_allowed(path):
         request.session["flash_msg"] = message
         request.session["flash_kind"] = "ok" if ok else "err"
     return RedirectResponse(dest, status_code=302)
@@ -305,6 +319,7 @@ async def page_home(request: Request):
     n_tasks = len(ordered)
     n_routines = len(db.get_routine_tasks(uid))
     n_done_today = len(db.get_done_tasks_today(uid))
+    n_projects = len(db.list_projects(uid))
     name = (user_row.get("first_name") or "").strip() or "друг"
     return templates.TemplateResponse(
         request,
@@ -316,12 +331,16 @@ async def page_home(request: Request):
             n_tasks=n_tasks,
             n_routines=n_routines,
             n_done_today=n_done_today,
+            n_projects=n_projects,
             job_1_title=JOB_1_TITLE,
             job_1_short=JOB_1_SHORT,
             job_1_how=JOB_1_HOW,
             job_2_title=JOB_2_TITLE,
             job_2_short=JOB_2_SHORT,
             job_2_how=JOB_2_HOW,
+            job_3_title=JOB_3_TITLE,
+            job_3_short=JOB_3_SHORT,
+            job_3_how=JOB_3_HOW,
         ),
     )
 
@@ -367,7 +386,8 @@ async def page_today(request: Request):
 
         def _sort_key(p: tuple[int, dict]) -> tuple:
             t = p[1]
-            return (t.get("due_time") or "99:99", t.get("id", 0))
+            ti = (t.get("due_time") or "").strip()
+            return (0 if ti else 1, ti or "99:99", t.get("id", 0))
 
         for bucket in _order:
             pairs = sorted(buckets[bucket], key=_sort_key)
@@ -377,6 +397,10 @@ async def page_today(request: Request):
                 time_part = ""
                 if t.get("due_time"):
                     time_part = f" в {_format_time_human(t['due_time'])}"
+                pl = ""
+                if t.get("project_title"):
+                    pe = (t.get("project_emoji") or "📁").strip() or "📁"
+                    pl = f"{pe} {t['project_title']}".strip()
                 rows.append(
                     {
                         "num": num,
@@ -387,6 +411,7 @@ async def page_today(request: Request):
                         "is_routine": bool(t.get("is_routine")),
                         "category_name": (t.get("category_name") or "").strip(),
                         "repeat_day": (t.get("repeat_day") or "").strip(),
+                        "project_label": pl,
                     }
                 )
             sections.append(
@@ -428,6 +453,10 @@ async def page_tasks(request: Request):
             time_part = f" в {_format_time_human(t['due_time'])}"
         dd = t.get("due_date")
         date_hint = f" · {dd}" if dd and not t.get("is_routine") else ""
+        pl = ""
+        if t.get("project_title"):
+            pe = (t.get("project_emoji") or "📁").strip() or "📁"
+            pl = f"{pe} {t['project_title']}".strip()
         return {
             "num": num,
             "task_id": t["id"],
@@ -438,6 +467,7 @@ async def page_tasks(request: Request):
             "is_routine": bool(t.get("is_routine")),
             "category_name": (t.get("category_name") or "").strip(),
             "repeat_day": (t.get("repeat_day") or "").strip(),
+            "project_label": pl,
         }
 
     from collections import defaultdict
@@ -507,6 +537,7 @@ async def page_report_today(request: Request):
     uid = user_row["id"]
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     tasks = db.get_done_tasks_today(uid)
+    db.attach_project_labels(uid, tasks)
     text = _format_done_report_today(tasks, tz_name)
     return templates.TemplateResponse(
         request,
@@ -530,8 +561,85 @@ async def page_help(request: Request):
             job_2_title=JOB_2_TITLE,
             job_2_short=JOB_2_SHORT,
             job_2_how=JOB_2_HOW,
+            job_3_title=JOB_3_TITLE,
+            job_3_short=JOB_3_SHORT,
+            job_3_how=JOB_3_HOW,
             ping_help_html=PING_HELP_HTML,
             future_week_view=FUTURE_WEEK_VIEW,
+        ),
+    )
+
+
+@app.get("/projects", response_class=HTMLResponse)
+async def page_projects(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    raw = db.list_projects(uid)
+    project_rows: list[dict] = []
+    for p in raw:
+        pid = int(p["id"])
+        project_rows.append(
+            {
+                "id": pid,
+                "title": (p.get("title") or "").strip(),
+                "emoji": ((p.get("emoji") or "📁").strip() or "📁"),
+                "n_active": db.count_active_tasks_in_project(uid, pid),
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "projects.html",
+        _ctx(projects=project_rows, empty=len(project_rows) == 0),
+    )
+
+
+@app.get("/projects/{project_id}", response_class=HTMLResponse)
+async def page_project_detail(request: Request, project_id: int):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    proj = db.get_project(uid, project_id)
+    if not proj:
+        return RedirectResponse("/projects", status_code=302)
+    from bot_v2 import _format_date_human, _format_time_human
+
+    tasks = db.get_active_tasks_for_project(uid, project_id)
+    db.attach_project_labels(uid, tasks)
+    rows: list[dict] = []
+    for i, t in enumerate(tasks, start=1):
+        emoji = t.get("category_emoji") or "📝"
+        time_part = ""
+        if t.get("due_time"):
+            time_part = f" в {_format_time_human(t['due_time'])}"
+        dd = t.get("due_date")
+        date_hint = ""
+        if dd:
+            date_hint = f" · {_format_date_human(dd)}"
+        rows.append(
+            {
+                "num": i,
+                "task_id": t["id"],
+                "emoji": emoji,
+                "text": t["text"],
+                "time_part": time_part,
+                "date_hint": date_hint,
+                "is_routine": False,
+                "category_name": (t.get("category_name") or "").strip(),
+                "repeat_day": "",
+            }
+        )
+    next_url = f"/projects/{project_id}"
+    return templates.TemplateResponse(
+        request,
+        "project_detail.html",
+        _ctx(
+            project=proj,
+            project_id=project_id,
+            rows=rows,
+            empty=len(rows) == 0,
+            next_url=next_url,
+            category_choices=_category_choices(uid),
         ),
     )
 
@@ -618,6 +726,7 @@ async def page_report_week(request: Request):
     uid = user_row["id"]
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     tasks = db.get_done_tasks(uid, days=7)
+    db.attach_project_labels(uid, tasks)
     text = _format_done_report_week(tasks, tz_name)
     return templates.TemplateResponse(
         request,
@@ -634,11 +743,51 @@ async def action_add(request: Request, text: str = Form("")):
     result = add_task_from_text(user_row, text)
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    if path in _FLASH_PATHS:
+    if _flash_allowed(path):
         return _flash_redirect(request, dest, result["message"], result["ok"])
     q = "ok=1" if result["ok"] else "err=add"
     sep = "&" if "?" in dest else "?"
     return RedirectResponse(f"{dest}{sep}{q}", status_code=302)
+
+
+@app.post("/projects/create")
+async def action_project_create(
+    request: Request, title: str = Form(""), emoji: str = Form("📁")
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    em = (emoji or "📁").strip() or "📁"
+    row = db.create_project(uid, title, em)
+    if row:
+        return _flash_redirect(request, f"/projects/{row['id']}", "Проект создан.", True)
+    return _flash_redirect(request, "/projects", "Укажи название проекта.", False)
+
+
+@app.post("/projects/{project_id}/add_task")
+async def action_project_add_task(
+    request: Request, project_id: int, text: str = Form("")
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    user_row = get_user_row()
+    result = add_project_task_from_text(user_row, project_id, text)
+    dest = f"/projects/{project_id}"
+    return _flash_redirect(request, dest, result["message"], result["ok"])
+
+
+@app.post("/projects/{project_id}/delete")
+async def action_project_delete(request: Request, project_id: int):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    ok = db.delete_project(uid, project_id)
+    msg = (
+        "Проект удалён. Задачи остались в списке, но без привязки к проекту."
+        if ok
+        else "Не удалось удалить проект."
+    )
+    return _flash_redirect(request, "/projects", msg, ok)
 
 
 @app.post("/tasks/complete")
@@ -656,7 +805,7 @@ async def action_complete(request: Request):
     uid = get_user_row()["id"]
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    flash_dest = path in _FLASH_PATHS
+    flash_dest = _flash_allowed(path)
 
     if not nums:
         if flash_dest:
@@ -691,7 +840,7 @@ async def action_complete_quick(request: Request, nums: str = Form("")):
     parsed = parse_number_list(nums)
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    flash_dest = path in _FLASH_PATHS
+    flash_dest = _flash_allowed(path)
 
     if not parsed:
         if flash_dest:
