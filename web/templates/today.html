@@ -11,22 +11,25 @@
 {% if empty %}
 <p class="muted">На сегодня задач нет.</p>
 {% else %}
+<p class="muted drag-hint">Перетащи задачу за <span class="mono">⋮⋮</span> в другой блок времени суток.</p>
 <form id="form-complete-today" method="post" action="/tasks/complete?next=/today"></form>
 <div class="task-form card card--flush">
   <h2 class="home-section-title">Список на сегодня</h2>
   {% for sec in sections %}
+  <section class="today-bucket-section task-drop-section" data-drop-kind="today_bucket" data-drop-bucket="{{ sec.bucket_key }}">
     {% if sec.bucket_title %}
     <h2 class="bucket">{{ sec.bucket_title }}</h2>
     {% endif %}
-    <ul class="task-list task-list--compact">
+    <ul class="task-list task-list--compact task-list--dropzone">
       {% for row in sec.rows %}
-      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
+      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row">
           <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="cb{{ row.num }}" form="form-complete-today">
           <label class="task-num-emoji" for="cb{{ row.num }}">
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </label>
+          {% include "partials/task_drag_handle.html" %}
           <div class="task-line-center">
             <div class="task-title-line">
               <span class="task-text-display">{{ row.text }}</span>
@@ -39,6 +42,7 @@
       </li>
       {% endfor %}
     </ul>
+  </section>
   {% endfor %}
   <div class="task-form-actions">
     <button type="submit" form="form-complete-today" class="btn-primary btn-block">Отметить выбранное выполненным</button>

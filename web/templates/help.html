@@ -11,6 +11,13 @@
   <p class="muted">Добавь задачу текстом или голосом на главной или в разделе «Сегодня», потом опирайся на номера в «Все задачи».</p>
 </section>
 
+<section class="card help-section" id="job-2">
+  <h2 class="home-section-title">Работа №2 — «{{ job_2_title }}»</h2>
+  <p class="muted">{{ job_2_short }}</p>
+  <p><strong>Как выполнить эту работу:</strong> {{ job_2_how }}</p>
+  <p class="muted">Сначала запиши дела (как в работе №1), затем распредели их по утру, дню и вечеру на «Сегодня» и по датам на «Все задачи».</p>
+</section>
+
 <section class="card help-section">
   <h2 class="home-section-title">Пинг, сервер и «засыпание»</h2>
   {{ ping_help_html | safe }}

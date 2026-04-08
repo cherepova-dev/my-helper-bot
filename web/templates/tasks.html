@@ -3,23 +3,24 @@
 {% block top_title %}Все задачи{% endblock %}
 {% block content %}
 <h1 class="page-heading">Все задачи</h1>
-<p class="muted">Номера как в боте. Двойной щелчок по тексту — правка. Меню ⋯ — перенос и удаление.</p>
+<p class="muted">Номера как в боте. Двойной щелчок — правка. <span class="mono">⋮⋮</span> — перетащить на другую дату. Меню ⋯ — перенос и удаление.</p>
 
 {% if empty %}
 <p class="muted">Нет активных задач.</p>
 {% else %}
 <div class="task-page-sections">
   {% for section in task_sections %}
-  <section class="task-date-section">
+  <section class="task-date-section task-drop-section" data-drop-kind="tasks_section" data-section-kind="{{ section.section_kind }}" data-section-date="{{ section.section_date }}">
     <h2 class="task-section-heading">{{ section.section_title }}</h2>
-    <ul class="task-list task-list--compact">
+    <ul class="task-list task-list--compact task-list--dropzone">
       {% for row in section.rows %}
-      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
+      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row task-line-row--list">
           <div class="task-num-emoji task-num-emoji--static">
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </div>
+          {% include "partials/task_drag_handle.html" %}
           <div class="task-line-center">
             <div class="task-title-line">
               <span class="task-text-display">{{ row.text }}</span>

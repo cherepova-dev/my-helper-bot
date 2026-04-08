@@ -353,3 +353,52 @@ def reschedule_task_by_id(user_id: int, task_id: int, due_date: str) -> dict[str
             return {"ok": True, "message": f"Рутина «{task.get('text', '')}» — {label}"}
         return {"ok": True, "message": f"На {due_date}: «{updated.get('text', task.get('text', ''))}»"}
     return {"ok": False, "message": "Не удалось перенести."}
+
+
+def set_task_time_bucket_by_id(user_id: int, task_id: int, bucket: str) -> dict[str, Any]:
+    """Веб: перетаскивание в блок утро/день/вечер на «Сегодня»."""
+    b = (bucket or "").strip().lower()
+    if b not in ("утро", "день", "вечер"):
+        return {"ok": False, "message": "Неверный блок: утро, день или вечер."}
+    if not _find_task_in_active(user_id, task_id):
+        return {"ok": False, "message": "Задача не найдена."}
+    updated = db.update_task(task_id, user_id, time_of_day=b)
+    if updated:
+        return {"ok": True, "message": "Время суток обновлено."}
+    return {"ok": False, "message": "Не удалось обновить."}
+
+
+def move_task_tasks_page_by_id(
+    user_id: int, task_id: int, target_kind: str, due_date: str | None
+) -> dict[str, Any]:
+    """
+    Веб: перетаскивание на странице «Все задачи».
+    target_kind: date | nodate | routine
+    """
+    task = _find_task_in_active(user_id, task_id)
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    kind = (target_kind or "").strip().lower()
+    if kind == "routine":
+        if not task.get("is_routine"):
+            return {
+                "ok": False,
+                "message": "Обычную задачу нельзя перенести в «Рутины» перетаскиванием.",
+            }
+        return {"ok": True, "message": "Без изменений."}
+    if kind == "nodate":
+        if task.get("is_routine"):
+            return {
+                "ok": False,
+                "message": "У рутины нужен день недели — перетащи на дату в календаре.",
+            }
+        updated = db.update_task(task_id, user_id, due_date=None)
+        if updated:
+            return {"ok": True, "message": "Срок снят."}
+        return {"ok": False, "message": "Не удалось обновить."}
+    if kind == "date":
+        d = (due_date or "").strip()
+        if not d:
+            return {"ok": False, "message": "Не указана дата."}
+        return reschedule_task_by_id(user_id, task_id, d)
+    return {"ok": False, "message": "Неизвестный тип секции."}

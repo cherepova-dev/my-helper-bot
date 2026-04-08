@@ -4,8 +4,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -17,7 +19,16 @@ from starlette.middleware.sessions import SessionMiddleware
 import ai_module
 import db
 from bot_v2 import HELP_TEXT
-from web.web_copy import FUTURE_WEEK_VIEW, JOB_1_HOW, JOB_1_SHORT, JOB_1_TITLE, PING_HELP_HTML
+from web.web_copy import (
+    FUTURE_WEEK_VIEW,
+    JOB_1_HOW,
+    JOB_1_SHORT,
+    JOB_1_TITLE,
+    JOB_2_HOW,
+    JOB_2_SHORT,
+    JOB_2_TITLE,
+    PING_HELP_HTML,
+)
 from task_commands import (
     add_task_from_text,
     apply_edit_phrase,
@@ -25,8 +36,10 @@ from task_commands import (
     complete_task_numbers,
     delete_task_by_id,
     delete_task_by_number,
+    move_task_tasks_page_by_id,
     parse_number_list,
     reschedule_task_by_id,
+    set_task_time_bucket_by_id,
     uncomplete_done_today,
     update_task_text_by_id,
 )
@@ -34,7 +47,62 @@ from task_commands import (
 ROOT = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 
-app = FastAPI(title="Helper Web", docs_url=None, redoc_url=None)
+
+def _self_ping_url_and_interval() -> tuple[str | None, int]:
+    """
+    Периодический GET публичного /health, чтобы хостинг чаще получал входящий трафик.
+    WEB_SELF_PING_URL или RENDER_EXTERNAL_URL — база без /health.
+    WEB_SELF_PING_INTERVAL_SEC: пусто → 840 с; «0» — выключить даже при URL.
+    """
+    base = (
+        os.environ.get("WEB_SELF_PING_URL") or os.environ.get("RENDER_EXTERNAL_URL") or ""
+    ).strip().rstrip("/")
+    raw = os.environ.get("WEB_SELF_PING_INTERVAL_SEC", "").strip()
+    if not base:
+        return None, 0
+    if raw == "0":
+        return None, 0
+    if raw == "":
+        return base, 840
+    try:
+        n = int(raw)
+        return (base, n) if n > 0 else (None, 0)
+    except ValueError:
+        return base, 840
+
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    base, interval = _self_ping_url_and_interval()
+    task = None
+    if interval > 0 and base:
+        health_url = base.rstrip("/") + "/health"
+
+        async def _ping_loop() -> None:
+            import httpx
+
+            await asyncio.sleep(12)
+            async with httpx.AsyncClient() as client:
+                while True:
+                    try:
+                        await client.get(health_url, timeout=25.0)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(interval)
+
+        task = asyncio.create_task(_ping_loop())
+    yield
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(
+    title="Helper Web", docs_url=None, redoc_url=None, lifespan=_app_lifespan
+)
 
 _secret = os.environ.get("WEB_SESSION_SECRET", "").strip()
 if not _secret:
@@ -209,19 +277,30 @@ async def page_home(request: Request):
             job_1_title=JOB_1_TITLE,
             job_1_short=JOB_1_SHORT,
             job_1_how=JOB_1_HOW,
+            job_2_title=JOB_2_TITLE,
+            job_2_short=JOB_2_SHORT,
+            job_2_how=JOB_2_HOW,
         ),
     )
+
+
+def _web_today_bucket_key(t: dict) -> str:
+    """Три блока на вебе: утро / день / вечер (вечер + ночь + без блока)."""
+    from bot_v2 import _task_time_bucket
+
+    b = _task_time_bucket(t)
+    if b == "утро":
+        return "утро"
+    if b == "день":
+        return "день"
+    return "вечер"
 
 
 @app.get("/today", response_class=HTMLResponse)
 async def page_today(request: Request):
     if not request.session.get("auth"):
         return RedirectResponse("/login", status_code=302)
-    from bot_v2 import (
-        _active_tasks_display_order,
-        _group_tasks_by_time_bucket,
-        _format_time_human,
-    )
+    from bot_v2 import _active_tasks_display_order, _format_time_human
 
     uid = get_user_row()["id"]
     db.transfer_overdue_tasks(uid)
@@ -230,18 +309,26 @@ async def page_today(request: Request):
     today_ids = {t["id"] for t in today_tasks}
     ordered_today = [(i, t) for i, t in enumerate(ordered, start=1) if t["id"] in today_ids]
 
-    _plain_bucket = {
+    _titles = {
         "утро": "🌅 Утро",
         "день": "☀️ День",
         "вечер": "🌆 Вечер",
-        "ночь": "🌙 Ночь",
     }
+    _order = ("утро", "день", "вечер")
     sections: list[dict] = []
     if not ordered_today:
         sections = []
     else:
-        for bucket, pairs in _group_tasks_by_time_bucket(ordered_today):
-            title = _plain_bucket.get(bucket, "") if bucket else ""
+        buckets: dict[str, list[tuple[int, dict]]] = {k: [] for k in _order}
+        for pair in ordered_today:
+            buckets[_web_today_bucket_key(pair[1])].append(pair)
+
+        def _sort_key(p: tuple[int, dict]) -> tuple:
+            t = p[1]
+            return (t.get("due_time") or "99:99", t.get("id", 0))
+
+        for bucket in _order:
+            pairs = sorted(buckets[bucket], key=_sort_key)
             rows = []
             for num, t in pairs:
                 emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
@@ -255,9 +342,17 @@ async def page_today(request: Request):
                         "text": t["text"],
                         "time_part": time_part,
                         "task_id": t["id"],
+                        "is_routine": bool(t.get("is_routine")),
                     }
                 )
-            sections.append({"bucket_title": title, "rows": rows, "bucket": bucket})
+            sections.append(
+                {
+                    "bucket_title": _titles[bucket],
+                    "bucket_key": bucket,
+                    "rows": rows,
+                    "bucket": bucket,
+                }
+            )
 
     return templates.TemplateResponse(
         request,
@@ -325,9 +420,20 @@ async def page_tasks(request: Request):
         else:
             title = "Рутины"
         pairs = buckets[sk]
+        if sk[0] == "date":
+            sec_kind = "date"
+            sec_date = sk[1]
+        elif sk[0] == "nodate":
+            sec_kind = "nodate"
+            sec_date = ""
+        else:
+            sec_kind = "routine"
+            sec_date = ""
         task_sections.append(
             {
                 "section_title": title,
+                "section_kind": sec_kind,
+                "section_date": sec_date,
                 "rows": [_row_dict(num, t) for num, t in pairs],
             }
         )
@@ -373,6 +479,9 @@ async def page_help(request: Request):
             job_1_title=JOB_1_TITLE,
             job_1_short=JOB_1_SHORT,
             job_1_how=JOB_1_HOW,
+            job_2_title=JOB_2_TITLE,
+            job_2_short=JOB_2_SHORT,
+            job_2_how=JOB_2_HOW,
             ping_help_html=PING_HELP_HTML,
             future_week_view=FUTURE_WEEK_VIEW,
         ),
@@ -658,6 +767,34 @@ async def action_reschedule_id(
             return JSONResponse(err)
         return _flash_redirect(request, next, err["message"], False)
     result = reschedule_task_by_id(uid, task_id, due)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/drag_move")
+async def action_drag_move(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/tasks"),
+    mode: str = Form(...),
+    bucket: str = Form(""),
+    section_kind: str = Form(""),
+    section_date: str = Form(""),
+):
+    if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    mode = (mode or "").strip().lower()
+    if mode == "today_bucket":
+        result = set_task_time_bucket_by_id(uid, task_id, bucket)
+    elif mode == "tasks_section":
+        d = (section_date or "").strip() or None
+        result = move_task_tasks_page_by_id(uid, task_id, section_kind, d)
+    else:
+        result = {"ok": False, "message": "Неизвестный режим переноса."}
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])

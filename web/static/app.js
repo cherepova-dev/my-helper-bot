@@ -183,6 +183,15 @@
     }
 
     document.addEventListener("click", function (e) {
+      var closer = e.target.closest(".task-kebab-close");
+      if (closer) {
+        var det = closer.closest(".task-kebab");
+        if (det) {
+          e.preventDefault();
+          det.open = false;
+        }
+        return;
+      }
       var btn = e.target.closest("[data-action]");
       if (!btn || !btn.closest(".task-kebab-panel")) return;
       var line = btn.closest(".task-line");
@@ -310,9 +319,107 @@
     });
   }
 
+  function initTaskDragDrop() {
+    var dragTaskId = null;
+    var dragLine = null;
+
+    function clearAllDropHover() {
+      document.querySelectorAll(".task-drop-section.task-drop-hover").forEach(function (z) {
+        z.classList.remove("task-drop-hover");
+      });
+    }
+
+    document.addEventListener(
+      "dragstart",
+      function (e) {
+        var h = e.target.closest(".task-drag-handle");
+        if (!h) return;
+        var line = h.closest(".task-line");
+        if (!line || !line.dataset.taskId) return;
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", line.dataset.taskId);
+        dragTaskId = line.dataset.taskId;
+        dragLine = line;
+        line.classList.add("task-line--dragging");
+      },
+      false
+    );
+
+    document.addEventListener(
+      "dragend",
+      function () {
+        clearAllDropHover();
+        if (dragLine) dragLine.classList.remove("task-line--dragging");
+        dragTaskId = null;
+        dragLine = null;
+      },
+      false
+    );
+
+    document.addEventListener(
+      "dragover",
+      function (e) {
+        if (!dragTaskId) return;
+        var zone = e.target.closest(".task-drop-section");
+        clearAllDropHover();
+        if (zone) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          zone.classList.add("task-drop-hover");
+        }
+      },
+      false
+    );
+
+    document.addEventListener(
+      "drop",
+      function (e) {
+        if (!dragTaskId || !dragLine) return;
+        var zone = e.target.closest(".task-drop-section");
+        if (!zone) return;
+        e.preventDefault();
+        clearAllDropHover();
+        var nextUrl = dragLine.dataset.nextUrl || "/tasks";
+        var fd = new FormData();
+        fd.append("task_id", dragTaskId);
+        fd.append("next", nextUrl);
+        var dk = zone.getAttribute("data-drop-kind");
+        if (dk === "today_bucket") {
+          var b = zone.getAttribute("data-drop-bucket");
+          if (!b) return;
+          fd.append("mode", "today_bucket");
+          fd.append("bucket", b);
+          fd.append("section_kind", "");
+          fd.append("section_date", "");
+        } else if (dk === "tasks_section") {
+          var sk = zone.getAttribute("data-section-kind");
+          if (!sk) return;
+          if (sk === "nodate" && dragLine.dataset.taskRoutine === "1") {
+            window.alert(
+              "Рутину нельзя перенести в «Без срока» — перетащи на дату в календаре."
+            );
+            return;
+          }
+          fd.append("mode", "tasks_section");
+          fd.append("bucket", "");
+          fd.append("section_kind", sk);
+          fd.append("section_date", zone.getAttribute("data-section-date") || "");
+        } else {
+          return;
+        }
+        postTaskAction("/tasks/drag_move", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+      },
+      false
+    );
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initNav();
     initVoice();
     initTaskRows();
+    initTaskDragDrop();
   });
 })();

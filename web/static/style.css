@@ -219,6 +219,45 @@ body {
 }
 .task-date-section .task-list { margin-top: 0; }
 
+.drag-hint { font-size: 0.92rem; margin-bottom: 0.65rem; }
+.drag-hint .mono,
+.mono {
+  font-family: ui-monospace, monospace;
+  color: var(--accent);
+}
+
+.task-drag-handle {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 0.35rem;
+  padding: 0.15rem 0.25rem;
+  cursor: grab;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  letter-spacing: -0.12em;
+  user-select: none;
+  border-radius: 6px;
+}
+.task-drag-handle:hover {
+  color: var(--accent);
+  background: rgba(29, 155, 240, 0.1);
+}
+.task-drag-handle:active {
+  cursor: grabbing;
+}
+.task-line--dragging {
+  opacity: 0.45;
+}
+.task-drop-section.task-drop-hover {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+.task-list--dropzone {
+  min-height: 2.5rem;
+}
+
 .home-hero { margin-bottom: 1.5rem; }
 .home-greeting {
   font-size: 1.05rem;
@@ -631,12 +670,49 @@ pre.task-dump, pre.report {
   top: 100%;
   margin-top: 0.2rem;
   min-width: 11rem;
-  padding: 0.35rem 0;
+  padding: 0 0 0.35rem;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   z-index: 50;
+}
+.task-kebab-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.25rem;
+}
+.task-kebab-panel-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.task-kebab-close {
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.task-kebab-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg);
 }
 .task-menu-item {
   display: block;
@@ -688,7 +764,7 @@ pre.task-dump, pre.report {
 .help-section p:first-of-type { margin-top: 0; }
 
 /* legacy primary buttons */
-button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-menu-item):not(.task-menu-ok) {
+button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-ok) {
   padding: 0.5rem 0.9rem;
   border-radius: 8px;
   border: none;
