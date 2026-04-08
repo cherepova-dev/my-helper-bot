@@ -1,0 +1,33 @@
+<div class="task-row-actions">
+  <form method="post" action="/tasks/update_text" class="task-form-inline">
+    <input type="hidden" name="task_id" value="{{ row.task_id }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <input type="text" name="text" value="{{ row.text }}" class="task-edit-input" autocomplete="off" aria-label="Текст задачи">
+    <button type="submit" class="btn-tiny">Сохранить</button>
+  </form>
+  <div class="reschedule-group">
+    <form method="post" action="/tasks/reschedule_id" class="reschedule-quick">
+      <input type="hidden" name="task_id" value="{{ row.task_id }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <input type="hidden" name="preset" value="tomorrow">
+      <button type="submit" class="btn-tiny">Завтра</button>
+    </form>
+    <form method="post" action="/tasks/reschedule_id" class="reschedule-quick">
+      <input type="hidden" name="task_id" value="{{ row.task_id }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <input type="hidden" name="preset" value="plus2">
+      <button type="submit" class="btn-tiny">Послезавтра</button>
+    </form>
+    <form method="post" action="/tasks/reschedule_id" class="reschedule-date">
+      <input type="hidden" name="task_id" value="{{ row.task_id }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <input type="date" name="due_date" class="input-date" required>
+      <button type="submit" class="btn-tiny">На дату</button>
+    </form>
+  </div>
+  <form method="post" action="/tasks/delete_id" class="task-delete-form" onsubmit="return confirm('Удалить эту задачу?');">
+    <input type="hidden" name="task_id" value="{{ row.task_id }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    <button type="submit" class="btn-tiny btn-danger">Удалить</button>
+  </form>
+</div>

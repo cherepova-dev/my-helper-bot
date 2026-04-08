@@ -294,3 +294,62 @@ def parse_number_list(s: str) -> list[int]:
         if part.isdigit():
             out.append(int(part))
     return sorted(set(out))
+
+
+def _find_task_in_active(user_id: int, task_id: int) -> dict | None:
+    from bot_v2 import _active_tasks_display_order
+
+    for t in _active_tasks_display_order(user_id):
+        if t["id"] == task_id:
+            return t
+    return None
+
+
+def delete_task_by_id(user_id: int, task_id: int) -> dict[str, Any]:
+    if not _find_task_in_active(user_id, task_id):
+        return {"ok": False, "message": "Задача не найдена в активном списке."}
+    if db.delete_task(task_id, user_id):
+        return {"ok": True, "message": "Задача удалена."}
+    return {"ok": False, "message": "Не удалось удалить."}
+
+
+def update_task_text_by_id(user_id: int, task_id: int, new_text: str) -> dict[str, Any]:
+    new_text = (new_text or "").strip()
+    if not new_text:
+        return {"ok": False, "message": "Текст не может быть пустым."}
+    if not _find_task_in_active(user_id, task_id):
+        return {"ok": False, "message": "Задача не найдена."}
+    new_title = normalize_task_display(new_text)
+    if new_title and new_title[0].isalpha():
+        new_title = new_title[0].upper() + new_title[1:]
+    updated = db.update_task(task_id, user_id, text=new_title)
+    if updated:
+        return {"ok": True, "message": f"Сохранено: «{updated.get('text', new_title)}»"}
+    return {"ok": False, "message": "Не удалось сохранить текст."}
+
+
+def reschedule_task_by_id(user_id: int, task_id: int, due_date: str) -> dict[str, Any]:
+    """Перенос на дату YYYY-MM-DD (обычная задача или день недели для рутины)."""
+    from datetime import datetime
+
+    task = _find_task_in_active(user_id, task_id)
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    try:
+        datetime.strptime(due_date, "%Y-%m-%d")
+    except ValueError:
+        return {"ok": False, "message": "Неверный формат даты."}
+    updates = {}
+    if task.get("is_routine"):
+        wd = datetime.strptime(due_date, "%Y-%m-%d").weekday()
+        day_codes = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+        updates["repeat_day"] = day_codes[wd]
+    else:
+        updates["due_date"] = due_date
+    updated = db.update_task(task_id, user_id, **updates)
+    if updated:
+        if task.get("is_routine"):
+            label = db.format_repeat_day_display(updates["repeat_day"])
+            return {"ok": True, "message": f"Рутина «{task.get('text', '')}» — {label}"}
+        return {"ok": True, "message": f"На {due_date}: «{updated.get('text', task.get('text', ''))}»"}
+    return {"ok": False, "message": "Не удалось перенести."}

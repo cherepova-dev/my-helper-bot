@@ -2,11 +2,10 @@
 {% block title %}Главная{% endblock %}
 {% block top_title %}Главная{% endblock %}
 {% block content %}
-<header class="home-hero">
-  <p class="home-greeting">{{ greeting }}, {{ user_name }}!</p>
-  <h1 class="home-title">Что делаем сегодня?</h1>
-  <p class="muted home-lead">Все разделы — только в меню слева (на телефоне — кнопка «☰»). Ниже — быстрый ввод и сводка.</p>
-</header>
+
+<section class="home-tagline card card--tagline">
+  <p class="home-one-liner"><strong>Помощник держит список дел за тебя</strong> — чтобы не крутить всё в голове и не бояться забыть. Ниже можно сразу записать задачу или голосом.</p>
+</section>
 
 {% set next_add = "/" %}
 {% set next_voice = "/" %}
@@ -16,7 +15,7 @@
   <a href="/today" class="dash-card">
     <span class="dash-card-kicker">Сегодня</span>
     <span class="dash-card-value">{{ n_today }}</span>
-    <span class="dash-card-hint">задач в плане</span>
+    <span class="dash-card-hint">в плане</span>
   </a>
   <a href="/tasks" class="dash-card">
     <span class="dash-card-kicker">Все задачи</span>
@@ -29,19 +28,25 @@
     <span class="dash-card-hint">повторов</span>
   </a>
   <a href="/reports/today" class="dash-card dash-card--accent">
-    <span class="dash-card-kicker">Отчёт</span>
-    <span class="dash-card-value">✓</span>
-    <span class="dash-card-hint">сделано сегодня</span>
+    <span class="dash-card-kicker">Сделано сегодня</span>
+    <span class="dash-card-value">{{ n_done_today }}</span>
+    <span class="dash-card-hint">задач выполнено</span>
   </a>
 </section>
 
+<section class="card home-job-block">
+  <h2 class="home-section-title">Задача №1 — «{{ job_1_title }}»</h2>
+  <p class="muted">{{ job_1_short }}</p>
+  <p>{{ job_1_how }}</p>
+  <p class="home-more"><a href="/help#job-1">Подробнее в справке →</a></p>
+</section>
+
 <section class="home-actions card">
-  <h2 class="home-section-title">Быстрые действия</h2>
+  <h2 class="home-section-title">Разделы</h2>
   <ul class="home-link-list">
-    <li><a href="/today">План на сегодня</a> — отметить галочками</li>
-    <li><a href="/actions">Действия</a> — удалить, перенести, отменить выполнение</li>
-    <li><a href="/reports/week">Сделано за неделю</a></li>
-    <li><a href="/help">Справка по командам</a></li>
+    <li><a href="/today">Сегодня</a> — отметить выполненное</li>
+    <li><a href="/actions">Действия</a> — сложные правки</li>
+    <li><a href="/reports/week">Неделя</a></li>
   </ul>
 </section>
 {% endblock %}

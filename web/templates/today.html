@@ -8,44 +8,42 @@
 <p class="flash err">Выбери задачи или проверь номера.</p>
 {% endif %}
 
-{% set next_add = "/today" %}
-{% set next_voice = "/today" %}
-{% include "partials/composer.html" %}
-
-<section class="quick-complete card">
-  <h2 class="home-section-title">Быстро отметить по номерам</h2>
-  <p class="muted">Глобальные номера из списка «Все задачи».</p>
-  <form method="post" action="/tasks/complete_quick?next=/today" class="inline-form">
-    <input type="text" name="nums" placeholder="Например: 1, 2, 4" class="composer-input">
-    <button type="submit" class="btn-primary">Отметить</button>
-  </form>
-</section>
-
 {% if empty %}
 <p class="muted">На сегодня задач нет.</p>
 {% else %}
-<form method="post" action="/tasks/complete?next=/today" class="task-form card card--flush">
+<form id="form-complete-today" method="post" action="/tasks/complete?next=/today"></form>
+<div class="task-form card card--flush">
   <h2 class="home-section-title">Список на сегодня</h2>
   {% for sec in sections %}
     {% if sec.bucket_title %}
     <h2 class="bucket">{{ sec.bucket_title }}</h2>
     {% endif %}
-    <ul class="task-list">
+    <ul class="task-list task-list--rich">
       {% for row in sec.rows %}
-      <li>
-        <label>
-          <input type="checkbox" name="num" value="{{ row.num }}">
-          <span class="num">{{ row.num }}.</span>
-          <span class="emoji">{{ row.emoji }}</span>
-          <span class="txt">{{ row.text }}{{ row.time_part }}</span>
-        </label>
+      <li class="task-line">
+        <div class="task-line-main">
+          <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="cb{{ row.num }}" form="form-complete-today">
+          <label class="task-line-label" for="cb{{ row.num }}">
+            <span class="num">{{ row.num }}.</span>
+            <span class="emoji">{{ row.emoji }}</span>
+            <span class="txt">{{ row.text }}{{ row.time_part }}</span>
+          </label>
+        </div>
+        {% include "partials/task_row_actions.html" %}
       </li>
       {% endfor %}
     </ul>
   {% endfor %}
   <div class="task-form-actions">
-    <button type="submit" class="btn-primary btn-block">Отметить выбранное выполненным</button>
+    <button type="submit" form="form-complete-today" class="btn-primary btn-block">Отметить выбранное выполненным</button>
   </div>
-</form>
+</div>
 {% endif %}
+
+{% set next_add = "/today" %}
+{% set next_voice = "/today" %}
+<section class="card composer-after">
+  <h2 class="home-section-title">Добавить задачу</h2>
+  {% include "partials/composer.html" %}
+</section>
 {% endblock %}

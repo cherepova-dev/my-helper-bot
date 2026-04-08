@@ -3,6 +3,27 @@
 {% block top_title %}Справка{% endblock %}
 {% block content %}
 <h1 class="page-heading">Справка</h1>
-<p class="muted">Те же правила, что в Telegram-боте. Номера задач — глобальные из последнего списка «Все задачи».</p>
-<pre class="help-text" id="help-pre">{{ help_text }}</pre>
+
+<section class="card help-section" id="job-1">
+  <h2 class="home-section-title">Работа №1 — «{{ job_1_title }}»</h2>
+  <p class="muted">{{ job_1_short }}</p>
+  <p><strong>Как выполнить эту работу:</strong> {{ job_1_how }}</p>
+  <p class="muted">Добавь задачу текстом или голосом на главной или в разделе «Сегодня», потом опирайся на номера в «Все задачи».</p>
+</section>
+
+<section class="card help-section">
+  <h2 class="home-section-title">Пинг, сервер и «засыпание»</h2>
+  {{ ping_help_html | safe }}
+</section>
+
+<section class="card help-section">
+  <h2 class="home-section-title">Перенос и план на неделю</h2>
+  <p class="muted">{{ future_week_view }}</p>
+</section>
+
+<section class="help-commands">
+  <h2 class="home-section-title">Команды (как в Telegram)</h2>
+  <p class="muted">Номера задач — глобальные из последнего списка «Все задачи».</p>
+  <pre class="help-text" id="help-pre">{{ help_text }}</pre>
+</section>
 {% endblock %}

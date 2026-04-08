@@ -3,11 +3,22 @@
 {% block top_title %}Все задачи{% endblock %}
 {% block content %}
 <h1 class="page-heading">Все задачи</h1>
-<p class="muted">Номера в этом списке — те же, что для «Отметить» и быстрых действий.</p>
+<p class="muted">Номера совпадают с командами в боте и с экраном «Сегодня».</p>
+
 {% if empty %}
 <p class="muted">Нет активных задач.</p>
 {% else %}
-<pre class="task-dump">{{ list_markdown }}</pre>
+<ul class="task-list task-list--rich">
+  {% for row in task_rows %}
+  <li class="task-line">
+    <div class="task-line-main task-line-main--full">
+      <span class="num">{{ row.num }}.</span>
+      <span class="emoji">{{ row.emoji }}</span>
+      <span class="txt">{{ row.text }}{{ row.time_part }}{{ row.date_hint }}</span>
+    </div>
+    {% include "partials/task_row_actions.html" %}
+  </li>
+  {% endfor %}
+</ul>
 {% endif %}
-<p class="muted"><a href="/today">План на сегодня</a> · <a href="/actions">Действия</a></p>
 {% endblock %}

@@ -51,16 +51,30 @@ body {
   border-radius: 8px;
 }
 .sidebar-brand:hover { background: var(--accent-dim); color: var(--accent); }
+.sidebar-brand.is-active {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.07);
+  font-weight: 700;
+}
 
 .nav-group-label {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  padding: 0.65rem 0.5rem 0.25rem;
-  margin-top: 0.25rem;
+  cursor: default;
+  user-select: none;
+  pointer-events: none;
+  padding: 0.55rem 0.5rem 0.15rem;
+  margin-top: 0.4rem;
 }
-.nav-group-label:first-child { padding-top: 0; margin-top: 0; }
+.nav-group-label:first-child { margin-top: 0; padding-top: 0; }
+.nav-group-label-inner {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: #6b7780;
+  border-left: 3px solid var(--accent);
+  padding-left: 0.5rem;
+  line-height: 1.35;
+}
 
 .sidebar-nav {
   display: flex;
@@ -478,13 +492,6 @@ pre.task-dump, pre.report {
 .stack-form label { display: block; }
 .radio-row { display: flex; align-items: center; gap: 0.35rem; font-weight: normal; }
 
-.routine-list li {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-
 .done-mini {
   margin: 0 0 0.75rem 1.1rem;
   padding: 0;
@@ -493,8 +500,117 @@ pre.task-dump, pre.report {
 }
 .done-mini li { margin: 0.2rem 0; }
 
-/* legacy button class for any leftover */
-button:not(.burger):not(.btn-voice) {
+.toolbar-home { margin: -0.25rem 0 1.1rem; }
+.link-home {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.link-home:hover { background: var(--accent-dim); border-color: var(--accent); }
+
+.card--tagline { background: linear-gradient(145deg, rgba(29, 155, 240, 0.08), var(--card)); }
+.home-one-liner { margin: 0; font-size: 1.02rem; line-height: 1.45; }
+.home-job-block p:last-of-type { margin-bottom: 0; }
+.home-more { margin: 0.75rem 0 0; }
+.home-more a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.home-more a:hover { text-decoration: underline; }
+.composer-after { margin-top: 1rem; }
+
+.task-list--rich .task-line {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.task-line-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.task-line-main--full { flex-wrap: wrap; }
+.task-cb { margin-top: 0.35rem; flex-shrink: 0; }
+.task-line-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.task-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding-left: 1.6rem;
+  border-left: 2px solid var(--border);
+  margin-left: 0.15rem;
+}
+.task-form-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.task-edit-input {
+  flex: 1;
+  min-width: 8rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #000;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.92rem;
+}
+.reschedule-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.reschedule-quick, .reschedule-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+}
+.input-date {
+  padding: 0.25rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #000;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.85rem;
+}
+.btn-tiny {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #1a1d21;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+}
+.btn-tiny:hover { border-color: var(--accent); color: var(--accent); }
+.btn-danger { border-color: rgba(244, 33, 46, 0.4); color: #f7777f; background: rgba(244, 33, 46, 0.08); }
+.btn-danger:hover { border-color: var(--err); color: #fff; background: rgba(244, 33, 46, 0.35); }
+
+.help-section { margin-bottom: 1rem; }
+.help-section p { margin: 0.5rem 0; }
+.help-section p:first-of-type { margin-top: 0; }
+
+/* legacy primary buttons (не трогаем мелкие кнопки строки) */
+button:not(.burger):not(.btn-voice):not(.btn-tiny):not(.btn-danger) {
   padding: 0.5rem 0.9rem;
   border-radius: 8px;
   border: none;

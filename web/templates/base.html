@@ -11,20 +11,19 @@
     <div class="nav-scrim" data-close-nav aria-hidden="true"></div>
     <aside class="sidebar" id="app-sidebar" aria-label="Основное меню">
       <div class="sidebar-head">
-        <a href="/" class="sidebar-brand">Помощник</a>
+        <a href="/" class="sidebar-brand{% if path == '/' %} is-active{% endif %}">Помощник</a>
       </div>
       {% set path = request.url.path %}
-      <nav class="sidebar-nav">
-        <div class="nav-group-label">Обзор</div>
-        <a href="/" class="nav-link{% if path == '/' %} is-active{% endif %}">Главная</a>
-        <div class="nav-group-label">Задачи</div>
+      <nav class="sidebar-nav" aria-label="Разделы приложения">
+        <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Обзор</span></div>
         <a href="/today" class="nav-link{% if path.startswith('/today') %} is-active{% endif %}">Сегодня</a>
+        <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Задачи</span></div>
         <a href="/tasks" class="nav-link{% if path == '/tasks' %} is-active{% endif %}">Все задачи</a>
         <a href="/routines" class="nav-link{% if path.startswith('/routines') %} is-active{% endif %}">Рутины</a>
-        <div class="nav-group-label">Отчёты</div>
+        <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Отчёты</span></div>
         <a href="/reports/today" class="nav-link{% if path == '/reports/today' %} is-active{% endif %}">Сделано сегодня</a>
         <a href="/reports/week" class="nav-link{% if path == '/reports/week' %} is-active{% endif %}">За неделю</a>
-        <div class="nav-group-label">Ещё</div>
+        <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Ещё</span></div>
         <a href="/actions" class="nav-link{% if path.startswith('/actions') %} is-active{% endif %}">Действия с задачами</a>
         <a href="/help" class="nav-link{% if path.startswith('/help') %} is-active{% endif %}">Справка</a>
       </nav>
@@ -41,6 +40,11 @@
         {% set _flash = consume_flash(request) %}
         {% if _flash.msg %}
         <p class="flash {{ _flash.kind }} global-flash" role="status">{{ _flash.msg }}</p>
+        {% endif %}
+        {% if request.url.path != '/' %}
+        <nav class="toolbar-home" aria-label="Назад">
+          <a href="/" class="link-home">← На главную</a>
+        </nav>
         {% endif %}
         {% block content %}{% endblock %}
       </main>

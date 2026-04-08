@@ -17,14 +17,18 @@ from starlette.middleware.sessions import SessionMiddleware
 import ai_module
 import db
 from bot_v2 import HELP_TEXT
+from web.web_copy import FUTURE_WEEK_VIEW, JOB_1_HOW, JOB_1_SHORT, JOB_1_TITLE, PING_HELP_HTML
 from task_commands import (
     add_task_from_text,
     apply_edit_phrase,
     apply_reschedule_phrase,
     complete_task_numbers,
+    delete_task_by_id,
     delete_task_by_number,
     parse_number_list,
+    reschedule_task_by_id,
     uncomplete_done_today,
+    update_task_text_by_id,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -153,9 +157,23 @@ def _greeting_hour() -> str:
     return "Доброй ночи"
 
 
+_FLASH_PATHS = frozenset(
+    {
+        "/",
+        "/today",
+        "/actions",
+        "/tasks",
+        "/routines",
+        "/help",
+        "/reports/today",
+        "/reports/week",
+    }
+)
+
+
 def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> RedirectResponse:
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    if path in ("/", "/today", "/actions"):
+    if path in _FLASH_PATHS:
         request.session["flash_msg"] = message
         request.session["flash_kind"] = "ok" if ok else "err"
     return RedirectResponse(dest, status_code=302)
@@ -176,6 +194,7 @@ async def page_home(request: Request):
     n_today = sum(1 for t in ordered if t["id"] in today_ids)
     n_tasks = len(ordered)
     n_routines = len(db.get_routine_tasks(uid))
+    n_done_today = len(db.get_done_tasks_today(uid))
     name = (user_row.get("first_name") or "").strip() or "друг"
     return templates.TemplateResponse(
         request,
@@ -186,6 +205,10 @@ async def page_home(request: Request):
             n_today=n_today,
             n_tasks=n_tasks,
             n_routines=n_routines,
+            n_done_today=n_done_today,
+            job_1_title=JOB_1_TITLE,
+            job_1_short=JOB_1_SHORT,
+            job_1_how=JOB_1_HOW,
         ),
     )
 
@@ -239,7 +262,11 @@ async def page_today(request: Request):
     return templates.TemplateResponse(
         request,
         "today.html",
-        _ctx(sections=sections, empty=len(sections) == 0),
+        _ctx(
+            sections=sections,
+            empty=len(sections) == 0,
+            next_url="/today",
+        ),
     )
 
 
@@ -247,16 +274,34 @@ async def page_today(request: Request):
 async def page_tasks(request: Request):
     if not request.session.get("auth"):
         return RedirectResponse("/login", status_code=302)
-    from bot_v2 import _active_tasks_display_order, _format_task_list
+    from bot_v2 import _active_tasks_display_order, _format_time_human
 
     uid = get_user_row()["id"]
     db.transfer_overdue_tasks(uid)
     tasks = _active_tasks_display_order(uid)
-    text = _format_task_list(tasks, with_numbers=True)
+    rows: list[dict] = []
+    for i, t in enumerate(tasks, start=1):
+        emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
+        time_part = ""
+        if t.get("due_time"):
+            time_part = f" в {_format_time_human(t['due_time'])}"
+        dd = t.get("due_date")
+        date_hint = f" · {dd}" if dd and not t.get("is_routine") else ""
+        rows.append(
+            {
+                "num": i,
+                "task_id": t["id"],
+                "emoji": emoji,
+                "text": t["text"],
+                "time_part": time_part,
+                "date_hint": date_hint,
+                "is_routine": bool(t.get("is_routine")),
+            }
+        )
     return templates.TemplateResponse(
         request,
         "tasks.html",
-        _ctx(list_markdown=text, empty=not tasks),
+        _ctx(task_rows=rows, empty=not rows, next_url="/tasks"),
     )
 
 
@@ -285,7 +330,14 @@ async def page_help(request: Request):
     return templates.TemplateResponse(
         request,
         "help.html",
-        _ctx(help_text=HELP_TEXT.replace("*", "")),
+        _ctx(
+            help_text=HELP_TEXT.replace("*", ""),
+            job_1_title=JOB_1_TITLE,
+            job_1_short=JOB_1_SHORT,
+            job_1_how=JOB_1_HOW,
+            ping_help_html=PING_HELP_HTML,
+            future_week_view=FUTURE_WEEK_VIEW,
+        ),
     )
 
 
@@ -301,7 +353,7 @@ async def page_routines(request: Request):
         return templates.TemplateResponse(
             request,
             "routines.html",
-            _ctx(sections=[], empty=True),
+            _ctx(sections=[], empty=True, next_url="/routines"),
         )
     _plain_bucket = {
         "утро": "🌅 Утро",
@@ -320,6 +372,7 @@ async def page_routines(request: Request):
             rows.append(
                 {
                     "num": num,
+                    "task_id": t["id"],
                     "emoji": emoji,
                     "text": t["text"],
                     "repeat_label": repeat_label,
@@ -329,7 +382,7 @@ async def page_routines(request: Request):
     return templates.TemplateResponse(
         request,
         "routines.html",
-        _ctx(sections=sections, empty=False),
+        _ctx(sections=sections, empty=False, next_url="/routines"),
     )
 
 
@@ -373,7 +426,7 @@ async def action_add(request: Request, text: str = Form("")):
     result = add_task_from_text(user_row, text)
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    if path in ("/", "/today", "/actions"):
+    if path in _FLASH_PATHS:
         return _flash_redirect(request, dest, result["message"], result["ok"])
     q = "ok=1" if result["ok"] else "err=add"
     sep = "&" if "?" in dest else "?"
@@ -395,7 +448,7 @@ async def action_complete(request: Request):
     uid = get_user_row()["id"]
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    flash_dest = path in ("/", "/today", "/actions")
+    flash_dest = path in _FLASH_PATHS
 
     if not nums:
         if flash_dest:
@@ -430,7 +483,7 @@ async def action_complete_quick(request: Request, nums: str = Form("")):
     parsed = parse_number_list(nums)
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
-    flash_dest = path in ("/", "/today", "/actions")
+    flash_dest = path in _FLASH_PATHS
 
     if not parsed:
         if flash_dest:
@@ -499,6 +552,58 @@ async def action_uncomplete(request: Request, num: int = Form(...)):
     result = uncomplete_done_today(uid, num)
     dest = request.query_params.get("next", "/actions")
     return _flash_redirect(request, dest, result["message"], result["ok"])
+
+
+@app.post("/tasks/delete_id")
+async def action_delete_id(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/today"),
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = delete_task_by_id(uid, task_id)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/update_text")
+async def action_update_text(
+    request: Request,
+    task_id: int = Form(...),
+    text: str = Form(""),
+    next: str = Form("/today"),
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = update_task_text_by_id(uid, task_id, text)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/reschedule_id")
+async def action_reschedule_id(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/today"),
+    due_date: str = Form(""),
+    preset: str = Form(""),
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    from datetime import datetime, timedelta
+
+    uid = get_user_row()["id"]
+    preset = (preset or "").strip()
+    due = (due_date or "").strip()
+    if preset == "tomorrow":
+        due = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    elif preset == "plus2":
+        due = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    if not due:
+        return _flash_redirect(request, next, "Укажи дату или выбери «Завтра».", False)
+    result = reschedule_task_by_id(uid, task_id, due)
+    return _flash_redirect(request, next, result["message"], result["ok"])
 
 
 @app.post("/tasks/voice")
