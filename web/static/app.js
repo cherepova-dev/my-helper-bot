@@ -158,8 +158,161 @@
     document.querySelectorAll("[data-voice-root]").forEach(initVoiceRoot);
   }
 
+  function postTaskAction(url, fd) {
+    return fetch(url, {
+      method: "POST",
+      body: fd,
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+    }).then(function (r) {
+      return r.json();
+    });
+  }
+
+  function initTaskRows() {
+    function taskFd(line) {
+      var fd = new FormData();
+      fd.append("task_id", line.dataset.taskId);
+      fd.append("next", line.dataset.nextUrl || "/today");
+      return fd;
+    }
+
+    function closeKebab(line) {
+      var det = line.querySelector(".task-kebab");
+      if (det) det.open = false;
+    }
+
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-action]");
+      if (!btn || !btn.closest(".task-kebab-panel")) return;
+      var line = btn.closest(".task-line");
+      if (!line) return;
+      e.preventDefault();
+      var action = btn.getAttribute("data-action");
+      var fd = taskFd(line);
+
+      if (action === "edit-text") {
+        closeKebab(line);
+        startEdit(line);
+        return;
+      }
+      if (action === "tomorrow") {
+        fd.append("preset", "tomorrow");
+        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+      if (action === "plus2") {
+        fd.append("preset", "plus2");
+        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+      if (action === "apply-date") {
+        var inp = line.querySelector(".task-date-input");
+        var d = inp && inp.value;
+        if (!d) {
+          window.alert("Выбери дату");
+          return;
+        }
+        fd.append("due_date", d);
+        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+      if (action === "delete") {
+        if (!window.confirm("Удалить эту задачу?")) return;
+        postTaskAction("/tasks/delete_id", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+      }
+    });
+
+    function startEdit(line) {
+      var display = line.querySelector(".task-text-display");
+      var input = line.querySelector(".task-text-input");
+      if (!display || !input) return;
+      input.value = display.textContent.trim();
+      display.hidden = true;
+      input.hidden = false;
+      input.focus();
+      input.select();
+    }
+
+    function cancelEdit(line) {
+      var display = line.querySelector(".task-text-display");
+      var input = line.querySelector(".task-text-input");
+      if (!display || !input) return;
+      input.hidden = true;
+      display.hidden = false;
+    }
+
+    function saveEdit(line) {
+      var display = line.querySelector(".task-text-display");
+      var input = line.querySelector(".task-text-input");
+      if (!display || !input) return;
+      var fd = taskFd(line);
+      fd.append("text", input.value);
+      postTaskAction("/tasks/update_text", fd).then(function (data) {
+        if (data.ok) {
+          display.textContent = input.value.trim();
+          cancelEdit(line);
+        } else {
+          window.alert(data.message || "Не сохранилось");
+        }
+      });
+    }
+
+    document.querySelectorAll(".task-line").forEach(function (line) {
+      var display = line.querySelector(".task-text-display");
+      var input = line.querySelector(".task-text-input");
+      if (!display || !input) return;
+
+      display.addEventListener("dblclick", function (e) {
+        e.preventDefault();
+        startEdit(line);
+      });
+
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          input.value = display.textContent;
+          cancelEdit(line);
+        }
+      });
+
+      input.addEventListener("blur", function () {
+        if (input.hidden) return;
+        setTimeout(function () {
+          if (input.hidden) return;
+          if (line.contains(document.activeElement)) return;
+          var before = display.textContent.trim();
+          var after = input.value.trim();
+          if (after === before) {
+            cancelEdit(line);
+            return;
+          }
+          if (!after) {
+            window.alert("Текст не может быть пустым");
+            input.focus();
+            return;
+          }
+          saveEdit(line);
+        }, 180);
+      });
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     initNav();
     initVoice();
+    initTaskRows();
   });
 })();

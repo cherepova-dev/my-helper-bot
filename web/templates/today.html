@@ -18,18 +18,24 @@
     {% if sec.bucket_title %}
     <h2 class="bucket">{{ sec.bucket_title }}</h2>
     {% endif %}
-    <ul class="task-list task-list--rich">
+    <ul class="task-list task-list--compact">
       {% for row in sec.rows %}
-      <li class="task-line">
-        <div class="task-line-main">
+      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
+        <div class="task-line-row">
           <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="cb{{ row.num }}" form="form-complete-today">
-          <label class="task-line-label" for="cb{{ row.num }}">
+          <label class="task-num-emoji" for="cb{{ row.num }}">
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
-            <span class="txt">{{ row.text }}{{ row.time_part }}</span>
           </label>
+          <div class="task-line-center">
+            <div class="task-title-line">
+              <span class="task-text-display">{{ row.text }}</span>
+              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи">
+              {% if row.time_part %}<span class="task-time muted">{{ row.time_part }}</span>{% endif %}
+            </div>
+          </div>
+          {% include "partials/task_kebab.html" %}
         </div>
-        {% include "partials/task_row_actions.html" %}
       </li>
       {% endfor %}
     </ul>

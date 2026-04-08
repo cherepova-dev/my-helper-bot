@@ -3,20 +3,28 @@
 {% block top_title %}Все задачи{% endblock %}
 {% block content %}
 <h1 class="page-heading">Все задачи</h1>
-<p class="muted">Номера совпадают с командами в боте и с экраном «Сегодня».</p>
+<p class="muted">Номера как в боте. Двойной щелчок по тексту — правка. Меню ⋯ — перенос и удаление.</p>
 
 {% if empty %}
 <p class="muted">Нет активных задач.</p>
 {% else %}
-<ul class="task-list task-list--rich">
+<ul class="task-list task-list--compact">
   {% for row in task_rows %}
-  <li class="task-line">
-    <div class="task-line-main task-line-main--full">
-      <span class="num">{{ row.num }}.</span>
-      <span class="emoji">{{ row.emoji }}</span>
-      <span class="txt">{{ row.text }}{{ row.time_part }}{{ row.date_hint }}</span>
+  <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
+    <div class="task-line-row task-line-row--list">
+      <div class="task-num-emoji task-num-emoji--static">
+        <span class="num">{{ row.num }}.</span>
+        <span class="emoji">{{ row.emoji }}</span>
+      </div>
+      <div class="task-line-center">
+        <div class="task-title-line">
+          <span class="task-text-display">{{ row.text }}</span>
+          <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи">
+          <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}</span>
+        </div>
+      </div>
+      {% include "partials/task_kebab.html" %}
     </div>
-    {% include "partials/task_row_actions.html" %}
   </li>
   {% endfor %}
 </ul>

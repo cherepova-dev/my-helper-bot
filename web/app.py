@@ -554,6 +554,10 @@ async def action_uncomplete(request: Request, num: int = Form(...)):
     return _flash_redirect(request, dest, result["message"], result["ok"])
 
 
+def _wants_json(request: Request) -> bool:
+    return "application/json" in (request.headers.get("accept") or "")
+
+
 @app.post("/tasks/delete_id")
 async def action_delete_id(
     request: Request,
@@ -561,9 +565,13 @@ async def action_delete_id(
     next: str = Form("/today"),
 ):
     if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row()["id"]
     result = delete_task_by_id(uid, task_id)
+    if _wants_json(request):
+        return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])
 
 
@@ -575,9 +583,13 @@ async def action_update_text(
     next: str = Form("/today"),
 ):
     if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row()["id"]
     result = update_task_text_by_id(uid, task_id, text)
+    if _wants_json(request):
+        return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])
 
 
@@ -590,6 +602,8 @@ async def action_reschedule_id(
     preset: str = Form(""),
 ):
     if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
     from datetime import datetime, timedelta
 
@@ -601,8 +615,13 @@ async def action_reschedule_id(
     elif preset == "plus2":
         due = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
     if not due:
-        return _flash_redirect(request, next, "Укажи дату или выбери «Завтра».", False)
+        err = {"ok": False, "message": "Укажи дату."}
+        if _wants_json(request):
+            return JSONResponse(err)
+        return _flash_redirect(request, next, err["message"], False)
     result = reschedule_task_by_id(uid, task_id, due)
+    if _wants_json(request):
+        return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])
 
 

@@ -10,15 +10,23 @@
   {% if sec.bucket_title %}
   <h2 class="bucket">{{ sec.bucket_title }}</h2>
   {% endif %}
-  <ul class="task-list task-list--rich routine-list">
+  <ul class="task-list task-list--compact routine-list">
     {% for row in sec.rows %}
-    <li class="task-line">
-      <div class="task-line-main task-line-main--full">
-        <span class="num">{{ row.num }}.</span>
-        <span class="emoji">{{ row.emoji }}</span>
-        <span class="txt">{{ row.text }} <span class="muted">— {{ row.repeat_label }}</span></span>
+    <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
+      <div class="task-line-row task-line-row--list">
+        <div class="task-num-emoji task-num-emoji--static">
+          <span class="num">{{ row.num }}.</span>
+          <span class="emoji">{{ row.emoji }}</span>
+        </div>
+        <div class="task-line-center">
+          <div class="task-title-line">
+            <span class="task-text-display">{{ row.text }}</span>
+            <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст рутины">
+            <span class="task-meta muted">— {{ row.repeat_label }}</span>
+          </div>
+        </div>
+        {% include "partials/task_kebab.html" %}
       </div>
-      {% include "partials/task_row_actions.html" %}
     </li>
     {% endfor %}
   </ul>
