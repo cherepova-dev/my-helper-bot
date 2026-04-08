@@ -29,6 +29,7 @@ from web.web_copy import (
     JOB_2_TITLE,
     PING_HELP_HTML,
 )
+from categories import builtin_keywords_for_name, keywords_text_to_json
 from task_commands import (
     add_task_from_text,
     apply_edit_phrase,
@@ -39,6 +40,9 @@ from task_commands import (
     move_task_tasks_page_by_id,
     parse_number_list,
     reschedule_task_by_id,
+    set_task_category_by_id,
+    set_task_repeat_day_by_id,
+    set_task_routine_kind_by_id,
     set_task_time_bucket_by_id,
     uncomplete_done_today,
     update_task_text_by_id,
@@ -232,11 +236,49 @@ _FLASH_PATHS = frozenset(
         "/actions",
         "/tasks",
         "/routines",
+        "/categories",
         "/help",
         "/reports/today",
         "/reports/week",
     }
 )
+
+
+def _category_choices(uid: int) -> list[dict]:
+    rows = db.get_categories(uid)
+    out = [
+        {"name": r["name"], "emoji": ((r.get("emoji") or "📝").strip() or "📝")}
+        for r in rows
+    ]
+    if not any(c["name"] == "Другое" for c in out):
+        out.append({"name": "Другое", "emoji": "📝"})
+    return out
+
+
+def _category_edit_rows(uid: int) -> list[dict]:
+    import json
+
+    result: list[dict] = []
+    for r in db.get_categories(uid):
+        kw_cell = (r.get("keywords") or "").strip()
+        if kw_cell:
+            try:
+                kws = json.loads(kw_cell)
+                kw_edit = ", ".join(str(x) for x in kws) if isinstance(kws, list) else kw_cell
+            except json.JSONDecodeError:
+                kw_edit = kw_cell
+        else:
+            hint = builtin_keywords_for_name(r["name"])
+            kw_edit = ", ".join(hint) if hint else ""
+        result.append(
+            {
+                "id": r["id"],
+                "emoji": r["emoji"],
+                "name": r["name"],
+                "keywords_edit": kw_edit,
+            }
+        )
+    return result
 
 
 def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> RedirectResponse:
@@ -343,6 +385,8 @@ async def page_today(request: Request):
                         "time_part": time_part,
                         "task_id": t["id"],
                         "is_routine": bool(t.get("is_routine")),
+                        "category_name": (t.get("category_name") or "").strip(),
+                        "repeat_day": (t.get("repeat_day") or "").strip(),
                     }
                 )
             sections.append(
@@ -361,6 +405,7 @@ async def page_today(request: Request):
             sections=sections,
             empty=len(sections) == 0,
             next_url="/today",
+            category_choices=_category_choices(uid),
         ),
     )
 
@@ -391,6 +436,8 @@ async def page_tasks(request: Request):
             "time_part": time_part,
             "date_hint": date_hint,
             "is_routine": bool(t.get("is_routine")),
+            "category_name": (t.get("category_name") or "").strip(),
+            "repeat_day": (t.get("repeat_day") or "").strip(),
         }
 
     from collections import defaultdict
@@ -445,6 +492,7 @@ async def page_tasks(request: Request):
             task_sections=task_sections,
             empty=len(tasks) == 0,
             next_url="/tasks",
+            category_choices=_category_choices(uid),
         ),
     )
 
@@ -500,7 +548,12 @@ async def page_routines(request: Request):
         return templates.TemplateResponse(
             request,
             "routines.html",
-            _ctx(sections=[], empty=True, next_url="/routines"),
+            _ctx(
+                sections=[],
+                empty=True,
+                next_url="/routines",
+                category_choices=_category_choices(uid),
+            ),
         )
     _plain_bucket = {
         "утро": "🌅 Утро",
@@ -523,13 +576,21 @@ async def page_routines(request: Request):
                     "emoji": emoji,
                     "text": t["text"],
                     "repeat_label": repeat_label,
+                    "is_routine": True,
+                    "category_name": (t.get("category_name") or "").strip(),
+                    "repeat_day": (t.get("repeat_day") or "").strip(),
                 }
             )
         sections.append({"bucket_title": title, "rows": rows, "bucket": bucket})
     return templates.TemplateResponse(
         request,
         "routines.html",
-        _ctx(sections=sections, empty=False, next_url="/routines"),
+        _ctx(
+            sections=sections,
+            empty=False,
+            next_url="/routines",
+            category_choices=_category_choices(uid),
+        ),
     )
 
 
@@ -798,6 +859,144 @@ async def action_drag_move(
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/set_category")
+async def action_set_category(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/tasks"),
+    category_name: str = Form(""),
+):
+    if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = set_task_category_by_id(uid, task_id, category_name)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/set_repeat_day")
+async def action_set_repeat_day(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/routines"),
+    repeat_day: str = Form(""),
+):
+    if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = set_task_repeat_day_by_id(uid, task_id, repeat_day)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/set_routine_kind")
+async def action_set_routine_kind(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/tasks"),
+    make_routine: str = Form("0"),
+):
+    if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    flag = (make_routine or "").strip().lower() in ("1", "true", "yes", "on")
+    result = set_task_routine_kind_by_id(uid, task_id, flag)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.get("/categories", response_class=HTMLResponse)
+async def page_categories(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    return templates.TemplateResponse(
+        request,
+        "categories.html",
+        _ctx(rows=_category_edit_rows(uid)),
+    )
+
+
+@app.post("/categories/save_row")
+async def categories_save_row(
+    request: Request,
+    category_id: int = Form(...),
+    emoji: str = Form(""),
+    name: str = Form(""),
+    keywords_text: str = Form(""),
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    name = (name or "").strip()
+    if not name:
+        return _flash_redirect(request, "/categories", "Название не может быть пустым.", False)
+    old = db.get_category_by_id(category_id, uid)
+    if old and (old.get("name") or "").strip().lower() != name.lower():
+        if _category_name_exists(uid, name):
+            return _flash_redirect(request, "/categories", "Категория с таким именем уже есть.", False)
+    kw_json = keywords_text_to_json(keywords_text)
+    row = db.update_category_row(
+        uid,
+        category_id,
+        emoji=(emoji or "📝").strip(),
+        name=name,
+        keywords=kw_json,
+    )
+    msg = "Сохранено." if row else "Не удалось сохранить."
+    return _flash_redirect(request, "/categories", msg, bool(row))
+
+
+@app.post("/categories/add")
+async def categories_add(
+    request: Request,
+    emoji: str = Form("📝"),
+    name: str = Form(""),
+    keywords_text: str = Form(""),
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    name = (name or "").strip()
+    if not name:
+        return _flash_redirect(request, "/categories", "Укажи название категории.", False)
+    if _category_name_exists(uid, name):
+        return _flash_redirect(request, "/categories", "Категория с таким именем уже есть.", False)
+    kw_json = keywords_text_to_json(keywords_text)
+    row = db.add_category_row(uid, (emoji or "📝").strip(), name, kw_json)
+    return _flash_redirect(request, "/categories", "Категория добавлена." if row else "Не удалось добавить.", bool(row))
+
+
+@app.post("/categories/delete")
+async def categories_delete(request: Request, category_id: int = Form(...)):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    ok = db.delete_category_row(uid, category_id)
+    return _flash_redirect(
+        request,
+        "/categories",
+        "Удалено." if ok else "Нельзя удалить: есть активные задачи с этой категорией или строка не найдена.",
+        ok,
+    )
+
+
+def _category_name_exists(uid: int, name: str) -> bool:
+    n = (name or "").strip().lower()
+    if not n:
+        return False
+    return any((r.get("name") or "").strip().lower() == n for r in db.get_categories(uid))
 
 
 @app.post("/tasks/voice")

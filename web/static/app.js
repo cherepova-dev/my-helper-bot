@@ -183,15 +183,6 @@
     }
 
     document.addEventListener("click", function (e) {
-      var closer = e.target.closest(".task-kebab-close");
-      if (closer) {
-        var det = closer.closest(".task-kebab");
-        if (det) {
-          e.preventDefault();
-          det.open = false;
-        }
-        return;
-      }
       var btn = e.target.closest("[data-action]");
       if (!btn || !btn.closest(".task-kebab-panel")) return;
       var line = btn.closest(".task-line");
@@ -238,6 +229,73 @@
       if (action === "delete") {
         if (!window.confirm("Удалить эту задачу?")) return;
         postTaskAction("/tasks/delete_id", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+      if (action === "make-routine") {
+        if (
+          !window.confirm(
+            "Сделать рутиной? Повтор будет по сегодняшнему дню недели — потом можно сменить в меню ⋯."
+          )
+        )
+          return;
+        closeKebab(line);
+        fd.append("make_routine", "1");
+        postTaskAction("/tasks/set_routine_kind", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+      if (action === "make-normal") {
+        if (!window.confirm("Сделать обычной задачей на сегодня?")) return;
+        closeKebab(line);
+        fd.append("make_routine", "0");
+        postTaskAction("/tasks/set_routine_kind", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+    });
+
+    document.addEventListener(
+      "click",
+      function (e) {
+        var x = e.target.closest(".task-kebab-close");
+        if (!x) return;
+        var det = x.closest(".task-kebab");
+        if (!det) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        det.removeAttribute("open");
+      },
+      true
+    );
+
+    document.addEventListener("change", function (e) {
+      var cat = e.target.closest(".task-category-select");
+      if (cat) {
+        var line = cat.closest(".task-line");
+        if (!line || !cat.value) return;
+        var fd = taskFd(line);
+        fd.append("category_name", cat.value);
+        postTaskAction("/tasks/set_category", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+      var rep = e.target.closest(".task-repeat-select");
+      if (rep) {
+        var line2 = rep.closest(".task-line");
+        if (!line2 || !rep.value) return;
+        var fd2 = taskFd(line2);
+        fd2.append("repeat_day", rep.value);
+        postTaskAction("/tasks/set_repeat_day", fd2).then(function (data) {
           if (data.ok) window.location.reload();
           else window.alert(data.message || "Ошибка");
         });
@@ -332,10 +390,16 @@
     document.addEventListener(
       "dragstart",
       function (e) {
-        var h = e.target.closest(".task-drag-handle");
-        if (!h) return;
-        var line = h.closest(".task-line");
+        var line = e.target.closest(".task-line.drag-enabled");
         if (!line || !line.dataset.taskId) return;
+        if (
+          e.target.closest(
+            "input, button, textarea, select, summary, label, .task-kebab, .task-cb"
+          )
+        ) {
+          e.preventDefault();
+          return;
+        }
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", line.dataset.taskId);
         dragTaskId = line.dataset.taskId;

@@ -436,7 +436,7 @@ async def _save_one_task_and_reply(
 
     # Определение категории по тексту задачи (до upper — по оригиналу для лучшего матчинга)
     _raw_for_cat = (clean_task_text_from_datetime(task_text) or task_text).strip()
-    category_emoji, category_name = assign_category(_raw_for_cat)
+    category_emoji, category_name = assign_category(_raw_for_cat, internal_user_id)
 
     if is_routine:
         date_label = "рутина"

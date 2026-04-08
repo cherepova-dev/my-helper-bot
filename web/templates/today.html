@@ -11,7 +11,7 @@
 {% if empty %}
 <p class="muted">На сегодня задач нет.</p>
 {% else %}
-<p class="muted drag-hint">Перетащи задачу за <span class="mono">⋮⋮</span> в другой блок времени суток.</p>
+<p class="muted drag-hint">Перетащи строку задачи (не чекбокс и не меню ⋯) в другой блок времени суток.</p>
 <form id="form-complete-today" method="post" action="/tasks/complete?next=/today"></form>
 <div class="task-form card card--flush">
   <h2 class="home-section-title">Список на сегодня</h2>
@@ -22,18 +22,17 @@
     {% endif %}
     <ul class="task-list task-list--compact task-list--dropzone">
       {% for row in sec.rows %}
-      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
+      <li class="task-line drag-enabled" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row">
-          <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="cb{{ row.num }}" form="form-complete-today">
-          <label class="task-num-emoji" for="cb{{ row.num }}">
+          <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="cb{{ row.num }}" form="form-complete-today" draggable="false">
+          <label class="task-num-emoji" for="cb{{ row.num }}" draggable="false">
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </label>
-          {% include "partials/task_drag_handle.html" %}
           <div class="task-line-center">
             <div class="task-title-line">
               <span class="task-text-display">{{ row.text }}</span>
-              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи">
+              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
               {% if row.time_part %}<span class="task-time muted">{{ row.time_part }}</span>{% endif %}
             </div>
           </div>

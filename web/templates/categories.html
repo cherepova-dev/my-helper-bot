@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Категории{% endblock %}
+{% block top_title %}Категории{% endblock %}
+{% block content %}
+<h1 class="page-heading">Категории и маячки</h1>
+<p class="muted">Слова через запятую (в нижнем регистре при сопоставлении). Бот при новой задаче считает совпадения: чем больше маячков из текста задачи попало в категорию, тем выше шанс выбрать её. Пустое поле у встроенных имён — подставляются слова из кода; своё поле перезаписывает их.</p>
+<p class="muted">Пример: категория «Не знаю» с маячками <span class="mono">не знаю, хз, непонятно, потом разберусь</span> — задачи с этими фразами чаще попадут в неё.</p>
+
+<section class="card">
+  <h2 class="home-section-title">Добавить категорию</h2>
+  <form method="post" action="/categories/add" class="stack-form category-add-form">
+    <label>Эмодзи <input type="text" name="emoji" value="📝" maxlength="8" class="input-narrow" autocomplete="off"></label>
+    <label>Название <input type="text" name="name" required placeholder="Не знаю" autocomplete="off"></label>
+    <label>Маячки (через запятую) <textarea name="keywords_text" rows="2" placeholder="не знаю, хз, непонятно"></textarea></label>
+    <button type="submit" class="btn-primary">Добавить</button>
+  </form>
+</section>
+
+{% for row in rows %}
+<section class="card category-edit-card">
+  <form method="post" action="/categories/save_row" class="stack-form">
+    <input type="hidden" name="category_id" value="{{ row.id }}">
+    <h2 class="home-section-title">{{ row.emoji }} {{ row.name }}</h2>
+    <label>Эмодзи <input type="text" name="emoji" value="{{ row.emoji }}" maxlength="8" autocomplete="off"></label>
+    <label>Название <input type="text" name="name" value="{{ row.name }}" required autocomplete="off"></label>
+    <label>Маячки (через запятую) <textarea name="keywords_text" rows="4">{{ row.keywords_edit }}</textarea></label>
+    <div class="form-row-actions">
+      <button type="submit" class="btn-primary">Сохранить</button>
+    </div>
+  </form>
+  <form method="post" action="/categories/delete" class="category-delete-form" onsubmit="return confirm('Удалить категорию «{{ row.name }}»? Только если нет активных задач с этим названием.');">
+    <input type="hidden" name="category_id" value="{{ row.id }}">
+    <button type="submit" class="btn-danger-outline">Удалить строку</button>
+  </form>
+</section>
+{% endfor %}
+
+{% if not rows %}
+<p class="muted">Категории не загружены.</p>
+{% endif %}
+{% endblock %}

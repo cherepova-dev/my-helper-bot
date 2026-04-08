@@ -62,7 +62,7 @@ def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
         task_title = normalize_task_display(task_title)
 
     _raw_for_cat = (clean_task_text_from_datetime(task_text) or task_text).strip()
-    category_emoji, category_name = assign_category(_raw_for_cat)
+    category_emoji, category_name = assign_category(_raw_for_cat, user_row["id"])
 
     if is_routine:
         date_label = "рутина"
@@ -402,3 +402,99 @@ def move_task_tasks_page_by_id(
             return {"ok": False, "message": "Не указана дата."}
         return reschedule_task_by_id(user_id, task_id, d)
     return {"ok": False, "message": "Неизвестный тип секции."}
+
+
+_REPEAT_WEB_ALLOWED = frozenset({"ежедневно", "пн", "вт", "ср", "чт", "пт", "сб", "вс"})
+
+
+def set_task_category_by_id(user_id: int, task_id: int, category_name: str) -> dict[str, Any]:
+    category_name = (category_name or "").strip()
+    if not category_name:
+        return {"ok": False, "message": "Выбери категорию."}
+    task = _find_task_in_active(user_id, task_id)
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    emoji = "📝"
+    found = False
+    for r in db.get_categories(user_id):
+        if r["name"].strip().lower() == category_name.strip().lower():
+            emoji = (r.get("emoji") or "📝").strip() or "📝"
+            category_name = r["name"]
+            found = True
+            break
+    if not found:
+        from categories import CATEGORIES
+
+        for _cid, em, nm, _kw in CATEGORIES:
+            if nm.strip().lower() == category_name.strip().lower():
+                emoji = em
+                category_name = nm
+                found = True
+                break
+    if not found:
+        return {"ok": False, "message": "Неизвестная категория."}
+    updated = db.update_task(task_id, user_id, category_emoji=emoji, category_name=category_name)
+    if updated:
+        return {"ok": True, "message": f"Категория: {emoji} {category_name}"}
+    return {"ok": False, "message": "Не удалось обновить."}
+
+
+def set_task_repeat_day_by_id(user_id: int, task_id: int, repeat_day: str) -> dict[str, Any]:
+    import random
+
+    from routines import ROUTINE_WEEKLY_NO_DAY, WEEKDAY_CODES
+
+    raw = (repeat_day or "").strip()
+    if not raw:
+        return {"ok": False, "message": "Выбери расписание."}
+    if raw == ROUTINE_WEEKLY_NO_DAY or raw.lower() == "раз в неделю":
+        new_rd = random.choice(tuple(WEEKDAY_CODES))
+    elif raw in _REPEAT_WEB_ALLOWED:
+        new_rd = raw
+    else:
+        return {"ok": False, "message": "Недопустимое расписание."}
+    task = _find_task_in_active(user_id, task_id)
+    if not task or not task.get("is_routine"):
+        return {"ok": False, "message": "Это не рутина."}
+    updated = db.update_task(task_id, user_id, repeat_day=new_rd)
+    if updated:
+        lbl = db.format_repeat_day_display(new_rd)
+        return {"ok": True, "message": f"Расписание: {lbl}"}
+    return {"ok": False, "message": "Не удалось обновить."}
+
+
+def set_task_routine_kind_by_id(user_id: int, task_id: int, make_routine: bool) -> dict[str, Any]:
+    task = _find_task_in_active(user_id, task_id)
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    today_str, today_wd = db._get_today_in_user_tz(user_id)
+    codes = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+    if make_routine:
+        if task.get("is_routine"):
+            return {"ok": True, "message": "Уже рутина."}
+        rd = codes[today_wd]
+        updated = db.update_task(
+            task_id,
+            user_id,
+            is_routine=True,
+            repeat_day=rd,
+            due_date=None,
+        )
+        if updated:
+            return {
+                "ok": True,
+                "message": f"Рутина: {db.format_repeat_day_display(rd)}. При необходимости смени день в меню ⋯.",
+            }
+        return {"ok": False, "message": "Не удалось обновить."}
+    if not task.get("is_routine"):
+        return {"ok": True, "message": "Уже обычная задача."}
+    updated = db.update_task(
+        task_id,
+        user_id,
+        is_routine=False,
+        repeat_day=None,
+        due_date=today_str,
+    )
+    if updated:
+        return {"ok": True, "message": "Сделана обычной задачей на сегодня."}
+    return {"ok": False, "message": "Не удалось обновить."}

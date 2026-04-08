@@ -3,9 +3,14 @@
 Определение категории задачи по тексту (без LLM).
 Используется в bot_v2 при добавлении задачи.
 7 категорий + «Другое», без «Регулярные» (рутины — отдельная фича).
+Ключевые слова из таблицы categories (поле keywords, JSON-массив) дополняют или
+заменяют встроенный список для пользователя; новые строки в БД — новые категории.
 """
 
+import json
 import re
+
+import db
 
 # Категории: (id, emoji, name, keywords)
 # keywords — подстроки в нижнем регистре; задача нормализуется перед поиском
@@ -139,6 +144,9 @@ CATEGORIES = [
             "доставк", "курьер", "получить посылку",
         ],
     ),
+    # Большие проекты — триггеры: ремонт, переезд, запуск, проект, планирование,
+    # стратегия, разработка, собрать/организовать, авто/машина/гараж, квартира/дом/строительство,
+    # стартап, бизнес, дизайн, реконструкция, перепланировка (см. полный список ниже)
     (
         "projects",
         "🧠",
@@ -166,10 +174,62 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
-def assign_category(task_text: str) -> tuple[str, str]:
+def _parse_keywords_cell(raw: str | None) -> list[str] | None:
+    """JSON-массив строк в keywords; иначе None (использовать встроенный список)."""
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [str(x).strip().lower() for x in data if str(x).strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
+
+
+def assignment_rule_tuples(user_id: int | None) -> list[tuple[str, str, list[str]]]:
+    """
+    Правила (emoji, name, keywords) по порядку.
+    Без user_id — только встроенные CATEGORIES; с user_id — строки из БД
+    переопределяют keywords и emoji для совпадающего name, плюс лишние категории из БД.
+    """
+    if not user_id:
+        return [(e, n, list(kw)) for cid, e, n, kw in CATEGORIES if cid != "other"]
+
+    db_rows = db.get_categories(user_id)
+    by_name: dict[str, dict] = {r["name"]: r for r in db_rows}
+    rules: list[tuple[str, str, list[str]]] = []
+    seen: set[str] = set()
+
+    for cat_id, emoji, name, builtin_kw in CATEGORIES:
+        if cat_id == "other":
+            continue
+        seen.add(name)
+        row = by_name.get(name)
+        if row:
+            parsed = _parse_keywords_cell(row.get("keywords"))
+            kws = parsed if parsed is not None else list(builtin_kw)
+            em = (row.get("emoji") or "").strip() or emoji
+            rules.append((em, name, kws))
+        else:
+            rules.append((emoji, name, list(builtin_kw)))
+
+    for r in db_rows:
+        nm = r["name"]
+        if nm in seen:
+            continue
+        seen.add(nm)
+        parsed = _parse_keywords_cell(r.get("keywords")) or []
+        em = (r.get("emoji") or "").strip() or "📝"
+        rules.append((em, nm, parsed))
+
+    return rules
+
+
+def assign_category(task_text: str, user_id: int | None = None) -> tuple[str, str]:
     """
     Определяет категорию задачи по тексту.
-    Возвращает (emoji, name).
+    Возвращает (emoji, name). user_id — учёт keywords из таблицы categories.
     """
     text = _normalize(task_text)
     if not text:
@@ -179,9 +239,7 @@ def assign_category(task_text: str) -> tuple[str, str]:
     best_name = "Другое"
     best_score = 0
 
-    for cat_id, emoji, name, keywords in CATEGORIES:
-        if cat_id == "other":
-            continue
+    for emoji, name, keywords in assignment_rule_tuples(user_id):
         score = 0
         for kw in keywords:
             if kw in text:
@@ -192,3 +250,17 @@ def assign_category(task_text: str) -> tuple[str, str]:
             best_name = name
 
     return best_emoji, best_name
+
+
+def builtin_keywords_for_name(name: str) -> list[str]:
+    """Ключевые слова из встроенного списка для названия категории (если есть)."""
+    for _cid, _emoji, nm, kw in CATEGORIES:
+        if nm == name:
+            return list(kw)
+    return []
+
+
+def keywords_text_to_json(text: str) -> str:
+    """Текст из поля «слова через запятую» → JSON-массив для столбца keywords."""
+    parts = [p.strip().lower() for p in text.replace("\n", ",").split(",") if p.strip()]
+    return json.dumps(parts, ensure_ascii=False)

@@ -80,7 +80,8 @@ def _init_tables_pg() -> None:
         user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         emoji       TEXT NOT NULL,
         name        TEXT NOT NULL,
-        sort_order  INTEGER DEFAULT 0
+        sort_order  INTEGER DEFAULT 0,
+        keywords    TEXT DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS tasks (
         id              SERIAL PRIMARY KEY,
@@ -117,6 +118,7 @@ def _init_tables_pg() -> None:
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
         "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
         "ALTER TABLE tasks ADD COLUMN last_completed_at TIMESTAMPTZ",
+        "ALTER TABLE categories ADD COLUMN keywords TEXT DEFAULT ''",
     ):
         try:
             cur.execute(col_sql)
@@ -142,7 +144,8 @@ def _init_tables_sqlite() -> None:
         user_id     INTEGER NOT NULL REFERENCES users(id),
         emoji       TEXT NOT NULL,
         name        TEXT NOT NULL,
-        sort_order  INTEGER DEFAULT 0
+        sort_order  INTEGER DEFAULT 0,
+        keywords    TEXT DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS tasks (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,6 +180,7 @@ def _init_tables_sqlite() -> None:
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
         "ALTER TABLE tasks ADD COLUMN repeat_day TEXT",
         "ALTER TABLE tasks ADD COLUMN last_completed_at TEXT",
+        "ALTER TABLE categories ADD COLUMN keywords TEXT DEFAULT ''",
     ):
         try:
             _conn.execute(col_sql)
@@ -404,6 +408,67 @@ def get_least_priority_task_for_date(user_id: int, date_str: str) -> dict | None
 
 def get_categories(user_id: int) -> list[dict]:
     return _fetchall("SELECT * FROM categories WHERE user_id = %s ORDER BY sort_order", (user_id,))
+
+
+def get_category_by_id(category_id: int, user_id: int) -> dict | None:
+    return _fetchone(
+        "SELECT * FROM categories WHERE id = %s AND user_id = %s",
+        (category_id, user_id),
+    )
+
+
+def update_category_row(
+    user_id: int,
+    category_id: int,
+    *,
+    emoji: str | None = None,
+    name: str | None = None,
+    keywords: str | None = None,
+) -> dict | None:
+    row = get_category_by_id(category_id, user_id)
+    if not row:
+        return None
+    em = emoji if emoji is not None else row["emoji"]
+    nm = name if name is not None else row["name"]
+    kw = keywords if keywords is not None else (row.get("keywords") or "")
+    _execute(
+        "UPDATE categories SET emoji = %s, name = %s, keywords = %s WHERE id = %s AND user_id = %s",
+        (em, nm, kw, category_id, user_id),
+    )
+    return get_category_by_id(category_id, user_id)
+
+
+def add_category_row(user_id: int, emoji: str, name: str, keywords: str = "") -> dict | None:
+    name = (name or "").strip()
+    if not name:
+        return None
+    row = _fetchone(
+        "SELECT COALESCE(MAX(sort_order), -1) AS m FROM categories WHERE user_id = %s",
+        (user_id,),
+    )
+    nxt = int(row["m"]) + 1 if row and row.get("m") is not None else 0
+    return _insert_returning(
+        "INSERT INTO categories (user_id, emoji, name, sort_order, keywords) "
+        "VALUES (%s, %s, %s, %s, %s) RETURNING *",
+        (user_id, (emoji or "📝").strip(), name, nxt, keywords or ""),
+    )
+
+
+def delete_category_row(user_id: int, category_id: int) -> bool:
+    """Удаляет строку категории, если на неё нет ссылок в активных задачах."""
+    row = get_category_by_id(category_id, user_id)
+    if not row:
+        return False
+    nm = row["name"]
+    cnt = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND status = 'active' "
+        "AND LOWER(TRIM(category_name)) = LOWER(TRIM(%s))",
+        (user_id, nm),
+    )
+    if cnt and int(cnt.get("c") or 0) > 0:
+        return False
+    n = _execute("DELETE FROM categories WHERE id = %s AND user_id = %s", (category_id, user_id))
+    return n > 0
 
 
 # ── Tasks ────────────────────────────────────────────────────────────────

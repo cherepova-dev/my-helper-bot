@@ -226,28 +226,55 @@ body {
   color: var(--accent);
 }
 
-.task-drag-handle {
-  flex-shrink: 0;
-  align-self: flex-start;
-  margin-top: 0.35rem;
-  padding: 0.15rem 0.25rem;
+.task-line.drag-enabled {
   cursor: grab;
-  color: var(--muted);
-  font-size: 0.85rem;
-  line-height: 1;
-  letter-spacing: -0.12em;
-  user-select: none;
-  border-radius: 6px;
 }
-.task-drag-handle:hover {
-  color: var(--accent);
-  background: rgba(29, 155, 240, 0.1);
-}
-.task-drag-handle:active {
+.task-line.drag-enabled:active {
   cursor: grabbing;
 }
 .task-line--dragging {
   opacity: 0.45;
+}
+.task-menu-row-select {
+  padding: 0.35rem 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.task-menu-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+.task-category-select,
+.task-repeat-select {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #000;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.88rem;
+}
+.category-add-form .input-narrow { max-width: 5rem; }
+.form-row-actions { margin-top: 0.5rem; }
+.category-delete-form {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+.btn-danger-outline {
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #f7777f;
+  background: transparent;
+  color: #f7777f;
+  font: inherit;
+  cursor: pointer;
+}
+.btn-danger-outline:hover {
+  background: rgba(244, 33, 46, 0.12);
 }
 .task-drop-section.task-drop-hover {
   outline: 2px dashed var(--accent);

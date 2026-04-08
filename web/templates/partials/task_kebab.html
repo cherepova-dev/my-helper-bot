@@ -1,15 +1,49 @@
-<details class="task-kebab">
-  <summary class="task-kebab-btn" aria-label="Действия с задачей">⋯</summary>
-  <div class="task-kebab-panel">
+<details class="task-kebab" draggable="false">
+  <summary class="task-kebab-btn" draggable="false" aria-label="Действия с задачей">⋯</summary>
+  <div class="task-kebab-panel" draggable="false">
     <div class="task-kebab-panel-head">
       <span class="task-kebab-panel-title">Действия</span>
       <button type="button" class="task-kebab-close" aria-label="Закрыть">×</button>
     </div>
+    {% if category_choices is defined %}
+    <div class="task-menu-row-select">
+      <label class="task-menu-label" for="cat-{{ row.task_id }}">Категория</label>
+      <select id="cat-{{ row.task_id }}" class="task-category-select" aria-label="Категория" draggable="false">
+        <option value="">— выбрать —</option>
+        {% for c in category_choices %}
+        <option value="{{ c.name }}" {% if (row.category_name or '') == c.name %}selected{% endif %}>{{ c.emoji }} {{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    {% if row.is_routine %}
+    <div class="task-menu-row-select">
+      <label class="task-menu-label" for="rep-{{ row.task_id }}">Расписание</label>
+      <select id="rep-{{ row.task_id }}" class="task-repeat-select" aria-label="Расписание рутины" draggable="false">
+        {% set rd = row.repeat_day or '' %}
+        <option value="" {% if (not rd) or (',' in rd) or rd.startswith('N_WEEK') %}selected{% endif %}>— изменить на —</option>
+        <option value="ежедневно" {% if rd == 'ежедневно' %}selected{% endif %}>Ежедневно</option>
+        <option value="пн" {% if rd == 'пн' %}selected{% endif %}>Понедельник</option>
+        <option value="вт" {% if rd == 'вт' %}selected{% endif %}>Вторник</option>
+        <option value="ср" {% if rd == 'ср' %}selected{% endif %}>Среда</option>
+        <option value="чт" {% if rd == 'чт' %}selected{% endif %}>Четверг</option>
+        <option value="пт" {% if rd == 'пт' %}selected{% endif %}>Пятница</option>
+        <option value="сб" {% if rd == 'сб' %}selected{% endif %}>Суббота</option>
+        <option value="вс" {% if rd == 'вс' %}selected{% endif %}>Воскресенье</option>
+        <option value="раз в неделю">Раз в неделю (случайный день)</option>
+      </select>
+    </div>
+    {% endif %}
     <button type="button" class="task-menu-item" data-action="edit-text">Изменить текст</button>
+    {% if row.is_routine %}
+    <button type="button" class="task-menu-item" data-action="make-normal">Сделать обычной задачей</button>
+    {% else %}
+    <button type="button" class="task-menu-item" data-action="make-routine">Сделать рутиной</button>
+    {% endif %}
     <button type="button" class="task-menu-item" data-action="tomorrow">На завтра</button>
     <button type="button" class="task-menu-item" data-action="plus2">Послезавтра</button>
     <div class="task-menu-date-row">
-      <input type="date" class="task-date-input" aria-label="Дата">
+      <input type="date" class="task-date-input" draggable="false" aria-label="Дата">
       <button type="button" class="task-menu-ok" data-action="apply-date">OK</button>
     </div>
     <button type="button" class="task-menu-item task-menu-danger" data-action="delete">Удалить</button>

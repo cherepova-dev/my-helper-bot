@@ -3,7 +3,7 @@
 {% block top_title %}Все задачи{% endblock %}
 {% block content %}
 <h1 class="page-heading">Все задачи</h1>
-<p class="muted">Номера как в боте. Двойной щелчок — правка. <span class="mono">⋮⋮</span> — перетащить на другую дату. Меню ⋯ — перенос и удаление.</p>
+<p class="muted">Номера как в боте. Двойной щелчок — правка. Перетащи строку (не меню ⋯) на другую дату. Меню ⋯ — категория, рутина, перенос.</p>
 
 {% if empty %}
 <p class="muted">Нет активных задач.</p>
@@ -14,17 +14,16 @@
     <h2 class="task-section-heading">{{ section.section_title }}</h2>
     <ul class="task-list task-list--compact task-list--dropzone">
       {% for row in section.rows %}
-      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
+      <li class="task-line drag-enabled" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row task-line-row--list">
-          <div class="task-num-emoji task-num-emoji--static">
+          <div class="task-num-emoji task-num-emoji--static" draggable="false">
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </div>
-          {% include "partials/task_drag_handle.html" %}
           <div class="task-line-center">
             <div class="task-title-line">
               <span class="task-text-display">{{ row.text }}</span>
-              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи">
+              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
               <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}</span>
             </div>
           </div>
