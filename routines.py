@@ -109,6 +109,32 @@ def parse_multiple_weekdays(text: str) -> list[str] | None:
     return unique if unique else None
 
 
+def _explicit_recurrence_context(text: str) -> bool:
+    """
+    Явные маркеры повторяемости (не просто «в пятницу» как срок разовой задачи).
+    Один день недели без этого контекста — не рутина.
+    """
+    lower = _normalize(text)
+    if any(kw in lower for kw in TRIGGERS_DAILY):
+        return True
+    if any(kw in lower for kw in TRIGGERS_WEEKLY_GENERIC):
+        return True
+    if re.search(r"\bкажд(ый|ую|ое|ые)\b", lower):
+        return True
+    # «по понедельникам», «по четвергам», «по средам»; не цепляем «средства»
+    if re.search(
+        r"по\s+(?:"
+        r"пн|вт|ср|чт|пт|сб|вс"
+        r"|понедельникам|вторникам|средам|четвергам|пятницам|субботам|воскресеньям|воскресениям"
+        r")(?:[\s,.;:!?]|$)",
+        lower,
+    ):
+        return True
+    if parse_n_times_per_week(text) is not None:
+        return True
+    return False
+
+
 def parse_n_times_per_week(text: str) -> int | None:
     """
     «два раза в неделю», «3 раза в неделю», «2 раза в неделю» → 2..7.
@@ -162,13 +188,19 @@ def is_routine_and_repeat(task_text: str) -> tuple[bool, str | None]:
     if any(kw in text for kw in TRIGGERS_DAILY):
         return True, "ежедневно"
 
-    # 3) Конкретный день или несколько дней (проверяем до «раз в неделю», чтобы «каждый четверг» дал чт)
+    # 3) Несколько дней — всегда рутина; один день — только при явной повторяемости
     days = parse_multiple_weekdays(task_text)
     if days:
-        return True, ",".join(days)
+        if len(days) >= 2:
+            return True, ",".join(days)
+        if _explicit_recurrence_context(task_text):
+            return True, days[0]
+        return False, None
     day = parse_weekday_from_text(task_text)
     if day:
-        return True, day
+        if _explicit_recurrence_context(task_text):
+            return True, day
+        return False, None
 
     # 3b) «N раз в неделю» без конкретных дней — дни подберёт БД по равномерности и загрузке
     n_times = parse_n_times_per_week(task_text)

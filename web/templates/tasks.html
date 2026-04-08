@@ -8,25 +8,32 @@
 {% if empty %}
 <p class="muted">Нет активных задач.</p>
 {% else %}
-<ul class="task-list task-list--compact">
-  {% for row in task_rows %}
-  <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
-    <div class="task-line-row task-line-row--list">
-      <div class="task-num-emoji task-num-emoji--static">
-        <span class="num">{{ row.num }}.</span>
-        <span class="emoji">{{ row.emoji }}</span>
-      </div>
-      <div class="task-line-center">
-        <div class="task-title-line">
-          <span class="task-text-display">{{ row.text }}</span>
-          <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи">
-          <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}</span>
+<div class="task-page-sections">
+  {% for section in task_sections %}
+  <section class="task-date-section">
+    <h2 class="task-section-heading">{{ section.section_title }}</h2>
+    <ul class="task-list task-list--compact">
+      {% for row in section.rows %}
+      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
+        <div class="task-line-row task-line-row--list">
+          <div class="task-num-emoji task-num-emoji--static">
+            <span class="num">{{ row.num }}.</span>
+            <span class="emoji">{{ row.emoji }}</span>
+          </div>
+          <div class="task-line-center">
+            <div class="task-title-line">
+              <span class="task-text-display">{{ row.text }}</span>
+              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи">
+              <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}</span>
+            </div>
+          </div>
+          {% include "partials/task_kebab.html" %}
         </div>
-      </div>
-      {% include "partials/task_kebab.html" %}
-    </div>
-  </li>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
   {% endfor %}
-</ul>
+</div>
 {% endif %}
 {% endblock %}

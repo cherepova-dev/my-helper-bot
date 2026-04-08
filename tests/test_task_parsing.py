@@ -58,6 +58,10 @@ class TestParseDueDate:
         assert parse_due_date("в пятницу массаж", today=MONDAY) == "2026-03-06"
         assert parse_due_date("пятница встреча", today=MONDAY) == "2026-03-06"
 
+    def test_weekday_short_code(self):
+        assert parse_due_date("купить молоко пт", today=MONDAY) == "2026-03-06"
+        assert parse_due_date("чт йога", today=MONDAY) == "2026-03-05"
+
     def test_weekday_sreda(self):
         assert parse_due_date("в среду звонок", today=MONDAY) == "2026-03-04"
 

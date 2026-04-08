@@ -274,34 +274,72 @@ async def page_today(request: Request):
 async def page_tasks(request: Request):
     if not request.session.get("auth"):
         return RedirectResponse("/login", status_code=302)
-    from bot_v2 import _active_tasks_display_order, _format_time_human
+    from bot_v2 import _active_tasks_display_order, _format_date_human, _format_time_human
 
     uid = get_user_row()["id"]
     db.transfer_overdue_tasks(uid)
     tasks = _active_tasks_display_order(uid)
-    rows: list[dict] = []
-    for i, t in enumerate(tasks, start=1):
+    numbered = list(enumerate(tasks, start=1))
+
+    def _row_dict(num: int, t: dict) -> dict:
         emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
         time_part = ""
         if t.get("due_time"):
             time_part = f" в {_format_time_human(t['due_time'])}"
         dd = t.get("due_date")
         date_hint = f" · {dd}" if dd and not t.get("is_routine") else ""
-        rows.append(
+        return {
+            "num": num,
+            "task_id": t["id"],
+            "emoji": emoji,
+            "text": t["text"],
+            "time_part": time_part,
+            "date_hint": date_hint,
+            "is_routine": bool(t.get("is_routine")),
+        }
+
+    from collections import defaultdict
+
+    buckets: dict[tuple, list[tuple[int, dict]]] = defaultdict(list)
+    for num, t in numbered:
+        if t.get("is_routine"):
+            buckets[("routine",)].append((num, t))
+        elif t.get("due_date"):
+            buckets[("date", t["due_date"])].append((num, t))
+        else:
+            buckets[("nodate",)].append((num, t))
+
+    date_keys = sorted((k for k in buckets if k[0] == "date"), key=lambda k: k[1])
+    section_order = list(date_keys)
+    if ("nodate",) in buckets:
+        section_order.append(("nodate",))
+    if ("routine",) in buckets:
+        section_order.append(("routine",))
+
+    task_sections: list[dict] = []
+    for sk in section_order:
+        if sk[0] == "date":
+            title = _format_date_human(sk[1])
+        elif sk[0] == "nodate":
+            title = "Без срока"
+        else:
+            title = "Рутины"
+        pairs = buckets[sk]
+        task_sections.append(
             {
-                "num": i,
-                "task_id": t["id"],
-                "emoji": emoji,
-                "text": t["text"],
-                "time_part": time_part,
-                "date_hint": date_hint,
-                "is_routine": bool(t.get("is_routine")),
+                "section_title": title,
+                "rows": [_row_dict(num, t) for num, t in pairs],
             }
         )
+
     return templates.TemplateResponse(
         request,
         "tasks.html",
-        _ctx(task_rows=rows, empty=not rows, next_url="/tasks"),
+        _ctx(
+            task_sections=task_sections,
+            empty=len(tasks) == 0,
+            next_url="/tasks",
+        ),
     )
 
 

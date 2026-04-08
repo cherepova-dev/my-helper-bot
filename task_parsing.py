@@ -192,6 +192,14 @@ def parse_due_date(text: str, today: datetime | None = None) -> str | None:
                 days_ahead += 7
             return (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
+    short_weekdays = {"пн": 0, "вт": 1, "ср": 2, "чт": 3, "пт": 4, "сб": 5, "вс": 6}
+    for code, wd in short_weekdays.items():
+        if re.search(rf"(^|[\s,]){re.escape(code)}([\s,]|$)", lower):
+            days_ahead = wd - today.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
     m = re.search(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?", lower)
     if m:
         day, month = int(m.group(1)), int(m.group(2))

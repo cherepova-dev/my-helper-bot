@@ -67,6 +67,18 @@ class TestIsRoutineAndRepeat:
         assert is_r is False
         assert rep is None
 
+    def test_single_weekday_without_recurrence_is_not_routine(self):
+        """«В пятницу» без «каждый»/«по …» — разовая задача, не рутина."""
+        is_r, rep = routines.is_routine_and_repeat("написать Тае в пятницу")
+        assert is_r is False
+        assert rep is None
+        is_r, rep = routines.is_routine_and_repeat("встреча в понедельник")
+        assert is_r is False
+        assert rep is None
+        is_r, rep = routines.is_routine_and_repeat("задача пт")
+        assert is_r is False
+        assert rep is None
+
 
 class TestParseWeekdayFromText:
     """Парсинг одного дня недели."""
