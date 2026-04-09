@@ -485,6 +485,120 @@ pre.task-dump, pre.report {
   line-height: 1.45;
 }
 
+.report-page-title {
+  margin-bottom: 0.65rem;
+}
+.report-card {
+  background: linear-gradient(165deg, rgba(29, 155, 240, 0.06), var(--card));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.25rem 1.4rem 1.4rem;
+  font-size: 1rem;
+  line-height: 1.62;
+  font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+}
+.report-line {
+  margin: 0 0 0.52rem;
+  color: var(--fg);
+}
+.report-line:last-child { margin-bottom: 0; }
+.report-line--item {
+  padding-left: 0.55rem;
+  margin-left: 0.15rem;
+  border-left: 3px solid rgba(29, 155, 240, 0.45);
+}
+.report-line--muted { color: var(--muted); }
+.report-gap {
+  height: 0.45rem;
+  margin: 0;
+}
+.report-rule {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.65rem 0;
+  opacity: 0.55;
+}
+.report-line strong {
+  font-weight: 650;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.report-line em {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.task-line-center--stack {
+  flex: 1;
+  min-width: 0;
+}
+.task-line-main {
+  width: 100%;
+  min-width: 0;
+}
+.task-line-toprow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.35rem 0.75rem;
+  justify-content: space-between;
+}
+.task-line-toprow .task-text-display {
+  flex: 1 1 12rem;
+  min-width: 0;
+  word-break: break-word;
+}
+.task-meta-right {
+  flex: 0 1 auto;
+  text-align: right;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
+@media (max-width: 520px) {
+  .task-meta-right {
+    flex-basis: 100%;
+    margin-left: 0;
+    text-align: left;
+    white-space: normal;
+  }
+}
+.task-project-row {
+  width: 100%;
+  margin-top: 0.22rem;
+  font-size: 0.87rem;
+  line-height: 1.35;
+}
+
+.project-done-section { margin-top: 1rem; }
+.project-done-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.project-done-item {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.48rem 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+.project-done-item:last-child { border-bottom: none; }
+.project-done-text {
+  flex: 1 1 10rem;
+  min-width: 0;
+  word-break: break-word;
+}
+.project-done-date {
+  flex: 0 0 auto;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
 .login-page {
   min-height: 100vh;
   display: flex;

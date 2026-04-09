@@ -6,7 +6,7 @@
   <a href="/projects" class="muted">← Все проекты</a>
 </nav>
 <h1 class="page-heading"><span class="project-heading-emoji">{{ project.emoji or "📁" }}</span> {{ project.title }}</h1>
-<p class="muted">Добавь шаг — срок подставится как у обычной задачи (можно написать «завтра» в тексте). Управление — меню ⋯ в строке.</p>
+<p class="muted">Новый шаг по умолчанию без срока и с категорией «Большие проекты»; дату и время можно задать в меню ⋯ или в тексте («завтра», «в 15:00»).</p>
 
 <section class="card">
   <h2 class="home-section-title">Новая задача в проекте</h2>
@@ -18,11 +18,11 @@
 </section>
 
 {% if empty %}
-<p class="muted">В проекте пока нет активных задач.</p>
+<p class="muted">В проекте пока нет активных шагов.</p>
 {% else %}
 <div class="task-page-sections">
   <section class="task-date-section">
-    <h2 class="task-section-heading">Шаги проекта</h2>
+    <h2 class="task-section-heading">Активные шаги</h2>
     <ul class="task-list task-list--compact">
       {% for row in rows %}
       <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="0">
@@ -31,11 +31,15 @@
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </div>
-          <div class="task-line-center">
-            <div class="task-title-line">
-              <span class="task-text-display">{{ row.text }}</span>
-              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
-              <span class="task-meta muted">{{ row.time_part }}{{ row.date_hint }}</span>
+          <div class="task-line-center task-line-center--stack">
+            <div class="task-line-main">
+              <div class="task-line-toprow">
+                <span class="task-text-display">{{ row.text }}</span>
+                <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
+                {% if row.date_right %}
+                <span class="task-meta-right muted">{{ row.date_right }}</span>
+                {% endif %}
+              </div>
             </div>
           </div>
           {% include "partials/task_kebab.html" %}
@@ -45,6 +49,20 @@
     </ul>
   </section>
 </div>
+{% endif %}
+
+{% if done_rows %}
+<section class="card project-done-section">
+  <h2 class="task-section-heading">Выполненные шаги</h2>
+  <ul class="project-done-list muted">
+    {% for d in done_rows %}
+    <li class="project-done-item">
+      <span class="project-done-text">{{ d.text }}</span>
+      {% if d.done_label %}<span class="project-done-date">{{ d.done_label }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
 {% endif %}
 
 <section class="card project-danger-zone">

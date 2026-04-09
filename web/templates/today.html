@@ -29,12 +29,18 @@
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </label>
-          <div class="task-line-center">
-            <div class="task-title-line">
-              <span class="task-text-display">{{ row.text }}</span>
-              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
-              {% if row.time_part %}<span class="task-time muted">{{ row.time_part }}</span>{% endif %}
-              {% if row.project_label %}<span class="task-project muted"> · {{ row.project_label }}</span>{% endif %}
+          <div class="task-line-center task-line-center--stack">
+            <div class="task-line-main">
+              <div class="task-line-toprow">
+                <span class="task-text-display">{{ row.text }}</span>
+                <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
+                {% if row.time_part %}
+                <span class="task-meta-right muted">{{ row.time_part }}</span>
+                {% endif %}
+              </div>
+              {% if row.project_label %}
+              <div class="task-project-row muted">{{ row.project_label }}</div>
+              {% endif %}
             </div>
           </div>
           {% include "partials/task_kebab.html" %}

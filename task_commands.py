@@ -115,12 +115,22 @@ def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
         return {"ok": False, "message": "Ошибка при сохранении задачи."}
 
 
+def _default_big_project_category() -> tuple[str, str]:
+    from categories import CATEGORIES
+
+    for cid, em, nm, _kw in CATEGORIES:
+        if cid == "projects":
+            return em, nm
+    return "🧠", "Большие проекты"
+
+
 def add_project_task_from_text(
     user_row: dict, project_id: int, task_text: str
 ) -> dict[str, Any]:
     """
     Добавляет обычную задачу внутри проекта. Рутины в проект не кладём.
-    Срок: из текста, иначе при включённом авторасписании — как у обычных задач, иначе сегодня (в TZ пользователя).
+    По умолчанию: категория «Большие проекты», без срока (дату задаёшь отдельно).
+    Срок и время — только если явно указаны в тексте («завтра», «в 15:00»).
     """
     if not task_text or not task_text.strip():
         return {"ok": False, "message": "Текст задачи пустой."}
@@ -130,7 +140,6 @@ def add_project_task_from_text(
     if not db.get_project(internal_user_id, project_id):
         return {"ok": False, "message": "Проект не найден."}
 
-    settings = db.get_settings(internal_user_id)
     is_routine, repeat_day = routines.is_routine_and_repeat(task_text)
     if is_routine:
         return {
@@ -152,10 +161,9 @@ def add_project_task_from_text(
     if task_title:
         task_title = normalize_task_display(task_title)
 
-    _raw_for_cat = (clean_task_text_from_datetime(task_text) or task_text).strip()
-    category_emoji, category_name = assign_category(_raw_for_cat, user_row["id"])
+    category_emoji, category_name = _default_big_project_category()
 
-    today_str, _ = db._get_today_in_user_tz(internal_user_id)
+    date_label = "без срока"
     if due_date:
         lower = task_text.lower()
         if "сегодня" in lower:
@@ -165,14 +173,7 @@ def add_project_task_from_text(
         elif "послезавтра" in lower:
             date_label = "послезавтра"
         else:
-            date_label = due_date
-    elif settings.get("auto_schedule", True):
-        from bot_v2 import _auto_schedule_date
-
-        due_date, date_label = _auto_schedule_date(internal_user_id)
-    else:
-        due_date = today_str
-        date_label = "сегодня"
+            date_label = str(due_date)
 
     try:
         task_row = db.add_task(
@@ -446,10 +447,17 @@ def reschedule_task_by_id(user_id: int, task_id: int, due_date: str) -> dict[str
 
 
 def set_task_time_bucket_by_id(user_id: int, task_id: int, bucket: str) -> dict[str, Any]:
-    """Веб: перетаскивание в блок утро/день/вечер на «Сегодня»."""
+    """Веб: перетаскивание в блок утро/день/вечер; «none» — снять время суток (рутины)."""
     b = (bucket or "").strip().lower()
-    if b not in ("утро", "день", "вечер"):
-        return {"ok": False, "message": "Неверный блок: утро, день или вечер."}
+    if b in ("none", "clear", "__none__"):
+        if not _find_task_in_active(user_id, task_id):
+            return {"ok": False, "message": "Задача не найдена."}
+        updated = db.update_task(task_id, user_id, time_of_day=None)
+        if updated:
+            return {"ok": True, "message": "Время суток снято."}
+        return {"ok": False, "message": "Не удалось обновить."}
+    if b not in ("утро", "день", "вечер", "ночь"):
+        return {"ok": False, "message": "Неверный блок: утро, день, вечер или ночь."}
     if not _find_task_in_active(user_id, task_id):
         return {"ok": False, "message": "Задача не найдена."}
     updated = db.update_task(task_id, user_id, time_of_day=b)

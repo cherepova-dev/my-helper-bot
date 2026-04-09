@@ -6,30 +6,31 @@
 {% if empty %}
 <p class="muted">Пока нет рутин. Добавь на главной или в «Сегодня», например: «Ежедневная зарядка», «Поливать цветы каждый четверг».</p>
 {% else %}
+<p class="muted drag-hint">Перетащи рутину в блок утра, дня или вечера (или в «Без времени» — сбросить период).</p>
 {% for sec in sections %}
-  {% if sec.bucket_title %}
-  <h2 class="bucket">{{ sec.bucket_title }}</h2>
-  {% endif %}
-  <ul class="task-list task-list--compact routine-list">
-    {% for row in sec.rows %}
-    <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}">
-      <div class="task-line-row task-line-row--list">
-        <div class="task-num-emoji task-num-emoji--static">
-          <span class="num">{{ row.num }}.</span>
-          <span class="emoji">{{ row.emoji }}</span>
-        </div>
-        <div class="task-line-center">
-          <div class="task-title-line">
-            <span class="task-text-display">{{ row.text }}</span>
-            <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст рутины">
-            <span class="task-meta muted">— {{ row.repeat_label }}</span>
+  <section class="today-bucket-section task-drop-section" data-drop-kind="today_bucket" data-drop-bucket="{{ sec.drop_bucket }}">
+    <h2 class="bucket">{{ sec.bucket_title }}</h2>
+    <ul class="task-list task-list--compact task-list--dropzone routine-list">
+      {% for row in sec.rows %}
+      <li class="task-line drag-enabled" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="1">
+        <div class="task-line-row task-line-row--list">
+          <div class="task-num-emoji task-num-emoji--static" draggable="false">
+            <span class="num">{{ row.num }}.</span>
+            <span class="emoji">{{ row.emoji }}</span>
           </div>
+          <div class="task-line-center">
+            <div class="task-title-line">
+              <span class="task-text-display">{{ row.text }}</span>
+              <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст рутины" draggable="false">
+              <span class="task-meta muted">— {{ row.repeat_label }}</span>
+            </div>
+          </div>
+          {% include "partials/task_kebab.html" %}
         </div>
-        {% include "partials/task_kebab.html" %}
-      </div>
-    </li>
-    {% endfor %}
-  </ul>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
 {% endfor %}
 {% endif %}
 {% endblock %}

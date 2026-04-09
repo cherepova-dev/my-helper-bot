@@ -540,6 +540,16 @@ def get_active_tasks_for_project(user_id: int, project_id: int) -> list[dict]:
     )
 
 
+def get_done_tasks_for_project(user_id: int, project_id: int, limit: int = 80) -> list[dict]:
+    """Выполненные задачи проекта (обычные done; рутины в проект не кладём)."""
+    lim = max(1, min(int(limit), 200))
+    return _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'done' "
+        "ORDER BY COALESCE(completed_at, '') DESC, id DESC LIMIT %s",
+        (user_id, project_id, lim),
+    )
+
+
 def get_project_meta_map(user_id: int) -> dict[int, dict]:
     rows = _fetchall("SELECT id, title, emoji FROM projects WHERE user_id = %s", (user_id,))
     out: dict[int, dict] = {}

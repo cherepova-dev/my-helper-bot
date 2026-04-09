@@ -33,6 +33,7 @@ from web.web_copy import (
     PING_HELP_HTML,
 )
 from categories import builtin_keywords_for_name, keywords_text_to_json
+from web.report_html import report_text_to_html
 from task_commands import (
     add_project_task_from_text,
     add_task_from_text,
@@ -357,13 +358,39 @@ def _web_today_bucket_key(t: dict) -> str:
     return "вечер"
 
 
+def _user_local_hour(tz_name: str) -> int:
+    from datetime import datetime
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo((tz_name or "Europe/Moscow").strip() or "Europe/Moscow")
+        return datetime.now(tz).hour
+    except Exception:
+        return datetime.now().hour
+
+
+def _show_today_bucket(bucket: str, hour: int, n_rows: int) -> bool:
+    """Скрывать пустые блоки утро/день, если соответствующее время суток уже прошло."""
+    if n_rows > 0:
+        return True
+    if bucket == "утро":
+        return hour < 12
+    if bucket == "день":
+        return hour < 17
+    return True
+
+
 @app.get("/today", response_class=HTMLResponse)
 async def page_today(request: Request):
     if not request.session.get("auth"):
         return RedirectResponse("/login", status_code=302)
     from bot_v2 import _active_tasks_display_order, _format_time_human
 
-    uid = get_user_row()["id"]
+    user_row = get_user_row()
+    uid = user_row["id"]
+    tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+    local_hour = _user_local_hour(tz_name)
     db.transfer_overdue_tasks(uid)
     ordered = _active_tasks_display_order(uid)
     today_tasks = db.get_today_tasks(uid)
@@ -396,7 +423,7 @@ async def page_today(request: Request):
                 emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
                 time_part = ""
                 if t.get("due_time"):
-                    time_part = f" в {_format_time_human(t['due_time'])}"
+                    time_part = f"в {_format_time_human(t['due_time'])}"
                 pl = ""
                 if t.get("project_title"):
                     pe = (t.get("project_emoji") or "📁").strip() or "📁"
@@ -414,6 +441,8 @@ async def page_today(request: Request):
                         "project_label": pl,
                     }
                 )
+            if not _show_today_bucket(bucket, local_hour, len(rows)):
+                continue
             sections.append(
                 {
                     "bucket_title": _titles[bucket],
@@ -428,7 +457,7 @@ async def page_today(request: Request):
         "today.html",
         _ctx(
             sections=sections,
-            empty=len(sections) == 0,
+            empty=len(ordered_today) == 0,
             next_url="/today",
             category_choices=_category_choices(uid),
         ),
@@ -450,9 +479,13 @@ async def page_tasks(request: Request):
         emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
         time_part = ""
         if t.get("due_time"):
-            time_part = f" в {_format_time_human(t['due_time'])}"
+            time_part = f"в {_format_time_human(t['due_time'])}"
         dd = t.get("due_date")
-        date_hint = f" · {dd}" if dd and not t.get("is_routine") else ""
+        date_human = ""
+        if dd and not t.get("is_routine"):
+            date_human = _format_date_human(dd)
+        right_bits = [x for x in (time_part, date_human) if x]
+        date_right = " · ".join(right_bits)
         pl = ""
         if t.get("project_title"):
             pe = (t.get("project_emoji") or "📁").strip() or "📁"
@@ -462,12 +495,12 @@ async def page_tasks(request: Request):
             "task_id": t["id"],
             "emoji": emoji,
             "text": t["text"],
-            "time_part": time_part,
-            "date_hint": date_hint,
+            "date_right": date_right,
             "is_routine": bool(t.get("is_routine")),
             "category_name": (t.get("category_name") or "").strip(),
             "repeat_day": (t.get("repeat_day") or "").strip(),
             "project_label": pl,
+            "has_project": bool(pl),
         }
 
     from collections import defaultdict
@@ -539,10 +572,11 @@ async def page_report_today(request: Request):
     tasks = db.get_done_tasks_today(uid)
     db.attach_project_labels(uid, tasks)
     text = _format_done_report_today(tasks, tz_name)
+    body_html = report_text_to_html(text)
     return templates.TemplateResponse(
         request,
         "report.html",
-        _ctx(title="Сделано сегодня", body_text=text),
+        _ctx(title="Сделано сегодня", body_html=body_html),
     )
 
 
@@ -609,25 +643,40 @@ async def page_project_detail(request: Request, project_id: int):
     rows: list[dict] = []
     for i, t in enumerate(tasks, start=1):
         emoji = t.get("category_emoji") or "📝"
-        time_part = ""
+        tp = ""
         if t.get("due_time"):
-            time_part = f" в {_format_time_human(t['due_time'])}"
+            tp = f"в {_format_time_human(t['due_time'])}"
         dd = t.get("due_date")
-        date_hint = ""
-        if dd:
-            date_hint = f" · {_format_date_human(dd)}"
+        dh = _format_date_human(dd) if dd else ""
+        date_right = " · ".join([x for x in (tp, dh) if x])
         rows.append(
             {
                 "num": i,
                 "task_id": t["id"],
                 "emoji": emoji,
                 "text": t["text"],
-                "time_part": time_part,
-                "date_hint": date_hint,
+                "date_right": date_right,
                 "is_routine": False,
                 "category_name": (t.get("category_name") or "").strip(),
                 "repeat_day": "",
+                "has_project": False,
+                "project_label": "",
             }
+        )
+    done_tasks = db.get_done_tasks_for_project(uid, project_id)
+    done_rows: list[dict] = []
+    for t in done_tasks:
+        ca = t.get("completed_at")
+        done_label = ""
+        if ca:
+            raw = str(ca).replace("Z", "")
+            ds = raw[:10]
+            if len(ds) == 10 and ds[4] == "-":
+                done_label = _format_date_human(ds)
+            else:
+                done_label = raw[:16]
+        done_rows.append(
+            {"text": (t.get("text") or "").strip(), "done_label": done_label}
         )
     next_url = f"/projects/{project_id}"
     return templates.TemplateResponse(
@@ -638,6 +687,7 @@ async def page_project_detail(request: Request, project_id: int):
             project_id=project_id,
             rows=rows,
             empty=len(rows) == 0,
+            done_rows=done_rows,
             next_url=next_url,
             category_choices=_category_choices(uid),
         ),
@@ -663,16 +713,23 @@ async def page_routines(request: Request):
                 category_choices=_category_choices(uid),
             ),
         )
-    _plain_bucket = {
+    _titles = {
         "утро": "🌅 Утро",
         "день": "☀️ День",
         "вечер": "🌆 Вечер",
         "ночь": "🌙 Ночь",
+        "": "◻ Без времени суток",
     }
+    _fixed = ("утро", "день", "вечер", "ночь", "")
     indexed = [(i, t) for i, t in enumerate(routine_tasks, start=1)]
-    sections: list[dict] = []
+    grouped: dict[str, list[tuple[int, dict]]] = {}
     for bucket, group in _group_tasks_by_time_bucket(indexed):
-        title = _plain_bucket.get(bucket, "") if bucket else ""
+        grouped[bucket] = group
+    sections: list[dict] = []
+    for bucket in _fixed:
+        group = grouped.get(bucket, [])
+        title = _titles.get(bucket, _titles[""])
+        drop_bucket = "none" if bucket == "" else bucket
         rows = []
         for num, t in group:
             repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
@@ -689,7 +746,14 @@ async def page_routines(request: Request):
                     "repeat_day": (t.get("repeat_day") or "").strip(),
                 }
             )
-        sections.append({"bucket_title": title, "rows": rows, "bucket": bucket})
+        sections.append(
+            {
+                "bucket_title": title,
+                "rows": rows,
+                "bucket": bucket,
+                "drop_bucket": drop_bucket,
+            }
+        )
     return templates.TemplateResponse(
         request,
         "routines.html",
@@ -728,10 +792,11 @@ async def page_report_week(request: Request):
     tasks = db.get_done_tasks(uid, days=7)
     db.attach_project_labels(uid, tasks)
     text = _format_done_report_week(tasks, tz_name)
+    body_html = report_text_to_html(text)
     return templates.TemplateResponse(
         request,
         "report.html",
-        _ctx(title="Сделано за неделю", body_text=text),
+        _ctx(title="Сделано за неделю", body_html=body_html),
     )
 
 

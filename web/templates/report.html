@@ -2,6 +2,8 @@
 {% block title %}{{ title }}{% endblock %}
 {% block top_title %}{{ title }}{% endblock %}
 {% block content %}
-<h1 class="page-heading">{{ title }}</h1>
-<pre class="report">{{ body_text }}</pre>
+<h1 class="page-heading report-page-title">{{ title }}</h1>
+<article class="report-card" aria-label="Текст отчёта">
+  {{ body_html | safe }}
+</article>
 {% endblock %}
