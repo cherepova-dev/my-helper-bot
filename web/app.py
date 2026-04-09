@@ -45,6 +45,7 @@ from task_commands import (
     move_task_tasks_page_by_id,
     parse_number_list,
     reschedule_task_by_id,
+    routine_snooze_from_today_plan,
     set_task_category_by_id,
     set_task_repeat_day_by_id,
     set_task_routine_kind_by_id,
@@ -439,6 +440,7 @@ async def page_today(request: Request):
                         "category_name": (t.get("category_name") or "").strip(),
                         "repeat_day": (t.get("repeat_day") or "").strip(),
                         "project_label": pl,
+                        "kebab_remove_from_plan": bool(t.get("is_routine")),
                     }
                 )
             if not _show_today_bucket(bucket, local_hour, len(rows)):
@@ -636,12 +638,22 @@ async def page_project_detail(request: Request, project_id: int):
     proj = db.get_project(uid, project_id)
     if not proj:
         return RedirectResponse("/projects", status_code=302)
-    from bot_v2 import _format_date_human, _format_time_human
+    from bot_v2 import (
+        _active_tasks_display_order,
+        _format_date_human,
+        _format_time_human,
+    )
 
+    db.transfer_overdue_tasks(uid)
+    ordered = _active_tasks_display_order(uid)
+    num_by_id = {t["id"]: i for i, t in enumerate(ordered, start=1)}
     tasks = db.get_active_tasks_for_project(uid, project_id)
     db.attach_project_labels(uid, tasks)
     rows: list[dict] = []
-    for i, t in enumerate(tasks, start=1):
+    for t in tasks:
+        num = num_by_id.get(t["id"])
+        if num is None:
+            continue
         emoji = t.get("category_emoji") or "📝"
         tp = ""
         if t.get("due_time"):
@@ -651,7 +663,7 @@ async def page_project_detail(request: Request, project_id: int):
         date_right = " · ".join([x for x in (tp, dh) if x])
         rows.append(
             {
-                "num": i,
+                "num": num,
                 "task_id": t["id"],
                 "emoji": emoji,
                 "text": t["text"],
@@ -992,6 +1004,23 @@ async def action_delete_id(
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row()["id"]
     result = delete_task_by_id(uid, task_id)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/routine_snooze_today")
+async def action_routine_snooze_today(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/today"),
+):
+    if not request.session.get("auth"):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    result = routine_snooze_from_today_plan(uid, task_id)
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])

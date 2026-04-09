@@ -599,6 +599,10 @@ pre.task-dump, pre.report {
   color: var(--muted);
 }
 
+.project-complete-actions {
+  margin-top: 0.75rem;
+}
+
 .login-page {
   min-height: 100vh;
   display: flex;

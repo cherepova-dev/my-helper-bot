@@ -396,6 +396,33 @@ def _find_task_in_active(user_id: int, task_id: int) -> dict | None:
     return None
 
 
+def routine_snooze_from_today_plan(user_id: int, task_id: int) -> dict[str, Any]:
+    """
+    Рутина остаётся в списке рутин, но исчезает с «Сегодня»: ставим due_date на завтра (в TZ пользователя).
+    """
+    from datetime import datetime, timedelta
+
+    task = _find_task_in_active(user_id, task_id)
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    if not task.get("is_routine"):
+        return {"ok": False, "message": "Только для рутин."}
+    today_str, _ = db._get_today_in_user_tz(user_id)
+    try:
+        y, m, d = map(int, today_str.split("-"))
+        nxt = datetime(y, m, d) + timedelta(days=1)
+        tomorrow = nxt.strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return {"ok": False, "message": "Не удалось вычислить дату."}
+    updated = db.update_task(task_id, user_id, due_date=tomorrow)
+    if updated:
+        return {
+            "ok": True,
+            "message": f"Рутина перенесена на {tomorrow} — не будет в плане на сегодня.",
+        }
+    return {"ok": False, "message": "Не удалось обновить."}
+
+
 def delete_task_by_id(user_id: int, task_id: int) -> dict[str, Any]:
     if not _find_task_in_active(user_id, task_id):
         return {"ok": False, "message": "Задача не найдена в активном списке."}

@@ -891,6 +891,9 @@ def get_today_tasks(user_id: int) -> list[dict]:
                     continue
             result.append(t)
         else:
+            # Шаг проекта без срока не считается «на сегодня», пока не назначена дата
+            if t.get("project_id") and not t.get("due_date"):
+                continue
             result.append(t)
     return result
 

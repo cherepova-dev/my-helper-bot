@@ -6,7 +6,7 @@
   <a href="/projects" class="muted">← Все проекты</a>
 </nav>
 <h1 class="page-heading"><span class="project-heading-emoji">{{ project.emoji or "📁" }}</span> {{ project.title }}</h1>
-<p class="muted">Новый шаг по умолчанию без срока и с категорией «Большие проекты»; дату и время можно задать в меню ⋯ или в тексте («завтра», «в 15:00»).</p>
+<p class="muted">Новый шаг по умолчанию без срока и с категорией «Большие проекты»; в «Сегодня» шаг попадёт только после назначения даты. Отметка выполнения — по глобальным номерам, как в «Все задачи».</p>
 
 <section class="card">
   <h2 class="home-section-title">Новая задача в проекте</h2>
@@ -20,6 +20,7 @@
 {% if empty %}
 <p class="muted">В проекте пока нет активных шагов.</p>
 {% else %}
+<form id="form-complete-project" method="post" action="/tasks/complete?next=/projects/{{ project_id }}"></form>
 <div class="task-page-sections">
   <section class="task-date-section">
     <h2 class="task-section-heading">Активные шаги</h2>
@@ -27,10 +28,11 @@
       {% for row in rows %}
       <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="0">
         <div class="task-line-row task-line-row--list">
-          <div class="task-num-emoji task-num-emoji--static" draggable="false">
+          <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="pcb{{ row.task_id }}" form="form-complete-project" draggable="false">
+          <label class="task-num-emoji task-num-emoji--static" for="pcb{{ row.task_id }}" draggable="false">
             <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
-          </div>
+          </label>
           <div class="task-line-center task-line-center--stack">
             <div class="task-line-main">
               <div class="task-line-toprow">
@@ -47,6 +49,9 @@
       </li>
       {% endfor %}
     </ul>
+    <div class="task-form-actions project-complete-actions">
+      <button type="submit" form="form-complete-project" class="btn-primary btn-block">Отметить выбранное выполненным</button>
+    </div>
   </section>
 </div>
 {% endif %}

@@ -226,6 +226,13 @@
         });
         return;
       }
+      if (action === "routine-snooze-today") {
+        postTaskAction("/tasks/routine_snooze_today", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
       if (action === "delete") {
         if (!window.confirm("Удалить эту задачу?")) return;
         postTaskAction("/tasks/delete_id", fd).then(function (data) {

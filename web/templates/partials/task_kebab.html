@@ -46,6 +46,10 @@
       <input type="date" class="task-date-input" draggable="false" aria-label="Дата">
       <button type="button" class="task-menu-ok" data-action="apply-date">OK</button>
     </div>
+    {% if row.kebab_remove_from_plan %}
+    <button type="button" class="task-menu-item" data-action="routine-snooze-today">Убрать из плана на сегодня</button>
+    {% else %}
     <button type="button" class="task-menu-item task-menu-danger" data-action="delete">Удалить</button>
+    {% endif %}
   </div>
 </details>
