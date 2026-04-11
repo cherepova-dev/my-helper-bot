@@ -8,21 +8,6 @@
 <h1 class="page-heading"><span class="project-heading-emoji">{{ project.emoji or "📁" }}</span> {{ project.title }}</h1>
 <p class="muted">Новый шаг по умолчанию без срока и с категорией «Большие проекты»; в «Сегодня» шаг попадёт только после назначения даты. Отметка выполнения — галочками, как на странице «Сегодня».</p>
 
-<section class="card project-edit-card">
-  <h2 class="home-section-title">Название и иконка</h2>
-  <form method="post" action="/projects/{{ project_id }}/update" class="stack-form project-edit-form">
-    <div class="project-edit-row">
-      <label class="project-edit-emoji-label">Иконка
-        <input type="text" name="emoji" value="{{ project.emoji or '📁' }}" maxlength="8" class="composer-input input-narrow" autocomplete="off" aria-label="Эмодзи проекта">
-      </label>
-      <label class="project-edit-title-label">Название
-        <input type="text" name="title" value="{{ project.title }}" required maxlength="200" class="composer-input" autocomplete="off">
-      </label>
-    </div>
-    <button type="submit" class="btn-primary">Сохранить</button>
-  </form>
-</section>
-
 <section class="card">
   <h2 class="home-section-title">Новая задача в проекте</h2>
   <form method="post" action="/projects/{{ project_id }}/add_task" class="stack-form">
@@ -83,6 +68,21 @@
   </ul>
 </section>
 {% endif %}
+
+<section class="card project-edit-card">
+  <h2 class="home-section-title">Название и иконка</h2>
+  <form method="post" action="/projects/{{ project_id }}/update" class="stack-form project-edit-form">
+    <div class="project-edit-row">
+      <label class="project-edit-emoji-label">Иконка
+        <input type="text" name="emoji" value="{{ project.emoji or '📁' }}" maxlength="8" class="composer-input input-narrow" autocomplete="off" aria-label="Эмодзи проекта">
+      </label>
+      <label class="project-edit-title-label">Название
+        <input type="text" name="title" value="{{ project.title }}" required maxlength="200" class="composer-input" autocomplete="off">
+      </label>
+    </div>
+    <button type="submit" class="btn-primary">Сохранить</button>
+  </form>
+</section>
 
 <section class="card project-danger-zone">
   <h2 class="home-section-title">Удалить проект</h2>

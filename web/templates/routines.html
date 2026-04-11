@@ -17,12 +17,12 @@
           <div class="task-num-emoji task-num-emoji--static" draggable="false">
             <span class="emoji">{{ row.emoji }}</span>
           </div>
-          <div class="task-line-center">
-            <div class="task-title-line">
+          <div class="task-line-center routine-line-body">
+            <div class="routine-line-title">
               <span class="task-text-display">{{ row.text }}</span>
               <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст рутины" draggable="false">
-              <span class="task-meta muted routine-repeat-label">— {{ row.repeat_label }}</span>
             </div>
+            <div class="routine-line-repeat muted">— {{ row.repeat_label }}</div>
           </div>
           {% include "partials/task_kebab.html" %}
         </div>
