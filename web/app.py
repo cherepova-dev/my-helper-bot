@@ -890,6 +890,23 @@ async def action_project_create(
     return _flash_redirect(request, "/projects", "Укажи название проекта.", False)
 
 
+@app.post("/projects/{project_id}/update")
+async def action_project_update(
+    request: Request,
+    project_id: int,
+    title: str = Form(""),
+    emoji: str = Form("📁"),
+):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    dest = f"/projects/{project_id}"
+    updated = db.update_project(uid, project_id, title.strip(), (emoji or "").strip())
+    if updated:
+        return _flash_redirect(request, dest, "Проект обновлён.", True)
+    return _flash_redirect(request, dest, "Укажи название проекта.", False)
+
+
 @app.post("/projects/{project_id}/add_task")
 async def action_project_add_task(
     request: Request, project_id: int, text: str = Form("")

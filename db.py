@@ -513,6 +513,21 @@ def create_project(user_id: int, title: str, emoji: str = "📁") -> dict | None
     )
 
 
+def update_project(user_id: int, project_id: int, title: str, emoji: str) -> dict | None:
+    """Обновляет название и эмодзи проекта. Пустое название — не допускается."""
+    t = (title or "").strip()
+    if not t:
+        return None
+    em = (emoji or "📁").strip() or "📁"
+    if not get_project(user_id, project_id):
+        return None
+    n = _execute(
+        "UPDATE projects SET title = %s, emoji = %s WHERE id = %s AND user_id = %s",
+        (t, em, project_id, user_id),
+    )
+    return get_project(user_id, project_id) if n else None
+
+
 def delete_project(user_id: int, project_id: int) -> bool:
     if not get_project(user_id, project_id):
         return False
