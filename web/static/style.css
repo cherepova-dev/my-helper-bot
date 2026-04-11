@@ -257,6 +257,64 @@ body {
   font: inherit;
   font-size: 0.88rem;
 }
+.routine-repeat-box {
+  padding: 0.35rem 0.75rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.routine-repeat-box > .task-menu-label {
+  margin-bottom: 0.35rem;
+}
+.routine-daily-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.88rem;
+}
+.routine-dow-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.25rem 0.35rem;
+  margin-bottom: 0.45rem;
+}
+@media (max-width: 400px) {
+  .routine-dow-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.routine-dow-item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+.routine-repeat-save {
+  margin-top: 0.25rem;
+}
+.routine-repeat-label {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+.settings-form .settings-field {
+  display: block;
+}
+.settings-label {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+.settings-hint {
+  display: block;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.88rem;
+}
+.btn-small {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.82rem;
+  border-radius: 8px;
+}
 .category-add-form .input-narrow { max-width: 5rem; }
 .form-row-actions { margin-top: 0.5rem; }
 .category-delete-form {
@@ -694,6 +752,28 @@ pre.task-dump, pre.report {
   color: var(--muted);
 }
 .done-mini li { margin: 0.2rem 0; }
+.done-mini-actions {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+.done-mini-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.92rem;
+}
+.done-mini-text {
+  flex: 1;
+  min-width: 0;
+}
+.done-mini-form {
+  margin: 0;
+}
 
 .toolbar-home { margin: -0.25rem 0 1.1rem; }
 .link-home {

@@ -231,6 +231,26 @@ def complete_task_numbers(user_id: int, nums: list[int]) -> tuple[list[str], lis
     return ok_titles, fail_nums
 
 
+def complete_task_ids(user_id: int, task_ids: list[int]) -> tuple[list[str], list[int]]:
+    """Отмечает выполненными задачи по id (активный список). Возвращает (заголовки, id с ошибкой)."""
+    from bot_v2 import _active_tasks_display_order
+
+    ordered = _active_tasks_display_order(user_id)
+    by_id = {t["id"]: t for t in ordered}
+    ok_titles: list[str] = []
+    fail_ids: list[int] = []
+    for tid in sorted(set(task_ids)):
+        task = by_id.get(tid)
+        if not task:
+            fail_ids.append(tid)
+            continue
+        if db.complete_task(task["id"], user_id, task=task):
+            ok_titles.append(task["text"])
+        else:
+            fail_ids.append(tid)
+    return ok_titles, fail_ids
+
+
 def delete_task_by_number(user_id: int, num: int, is_routine: bool) -> dict[str, Any]:
     """Удаление по номеру: задачи — глобальный номер из списка; рутины — номер из экрана рутин."""
     from bot_v2 import _active_tasks_display_order
@@ -363,6 +383,16 @@ def uncomplete_done_today(user_id: int, num: int) -> dict[str, Any]:
     if db.uncomplete_task(task["id"], user_id):
         return {"ok": True, "message": f"Задача «{task.get('text', '')}» снова в активных."}
     return {"ok": False, "message": "Не удалось отменить выполнение."}
+
+
+def uncomplete_done_today_by_id(user_id: int, task_id: int) -> dict[str, Any]:
+    """Вернуть в активные выполненную сегодня задачу по id."""
+    for t in db.get_done_tasks_today(user_id):
+        if t["id"] == task_id:
+            if db.uncomplete_task(task_id, user_id):
+                return {"ok": True, "message": f"Задача «{t.get('text', '')}» снова в активных."}
+            return {"ok": False, "message": "Не удалось отменить выполнение."}
+    return {"ok": False, "message": "Эта задача не найдена среди выполненных сегодня."}
 
 
 def parse_number_list(s: str) -> list[int]:
@@ -530,6 +560,34 @@ def move_task_tasks_page_by_id(
 
 
 _REPEAT_WEB_ALLOWED = frozenset({"ежедневно", "пн", "вт", "ср", "чт", "пт", "сб", "вс"})
+_REPEAT_DAY_ORDER = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+
+def _normalize_web_repeat_day(raw: str) -> str | None:
+    """Единичный день, ежедневно, «раз в неделю» или несколько дней через запятую (пн,ср,пт)."""
+    import random
+
+    from routines import ROUTINE_WEEKLY_NO_DAY, WEEKDAY_CODES
+
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if s == ROUTINE_WEEKLY_NO_DAY or s.lower() == "раз в неделю":
+        return random.choice(tuple(WEEKDAY_CODES))
+    low = s.lower()
+    if low == "ежедневно":
+        return "ежедневно"
+    if "," in s:
+        parts = [p.strip().lower() for p in s.split(",") if p.strip()]
+        if not parts:
+            return None
+        for p in parts:
+            if p not in _REPEAT_DAY_ORDER:
+                return None
+        return ",".join(c for c in _REPEAT_DAY_ORDER if c in parts)
+    if s in _REPEAT_WEB_ALLOWED:
+        return s
+    return None
 
 
 def set_task_category_by_id(user_id: int, task_id: int, category_name: str) -> dict[str, Any]:
@@ -565,18 +623,11 @@ def set_task_category_by_id(user_id: int, task_id: int, category_name: str) -> d
 
 
 def set_task_repeat_day_by_id(user_id: int, task_id: int, repeat_day: str) -> dict[str, Any]:
-    import random
-
-    from routines import ROUTINE_WEEKLY_NO_DAY, WEEKDAY_CODES
-
     raw = (repeat_day or "").strip()
     if not raw:
         return {"ok": False, "message": "Выбери расписание."}
-    if raw == ROUTINE_WEEKLY_NO_DAY or raw.lower() == "раз в неделю":
-        new_rd = random.choice(tuple(WEEKDAY_CODES))
-    elif raw in _REPEAT_WEB_ALLOWED:
-        new_rd = raw
-    else:
+    new_rd = _normalize_web_repeat_day(raw)
+    if not new_rd:
         return {"ok": False, "message": "Недопустимое расписание."}
     task = _find_task_in_active(user_id, task_id)
     if not task or not task.get("is_routine"):

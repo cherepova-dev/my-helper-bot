@@ -24,7 +24,6 @@ from bot_v2 import (
     _format_done_report,
     _format_done_report_today,
     _format_done_report_week,
-    _extract_uncomplete_number,
     _group_tasks_by_time_bucket,
     _task_time_bucket,
 )
@@ -108,7 +107,7 @@ class TestFormatTaskList:
         tasks = [{"text": "купить молоко", "category_emoji": "📝", "due_date": None, "due_time": None}]
         result = _format_task_list(tasks)
         assert "купить молоко" in result
-        assert "1" in result or "задач" in result.lower()
+        assert "задач" in result.lower()
 
     def test_human_date_and_grouping(self):
         """Список: человекочитаемая дата (например «3 марта 2026»), группировка по дате, сортировка по дате и времени."""
@@ -134,28 +133,24 @@ class TestFormatTaskList:
         assert "Рутины" in result
         assert "полив цветов" in result
         assert "четверг" in result.lower() or "Четверг" in result
-        assert "глоб." in result
+        assert "глоб." not in result
 
-    def test_local_and_global_numbering(self):
-        """В секции по дате — локальный 1, 2 и глобальные номера в скобках."""
+    def test_project_emoji_for_project_task(self):
         tasks = [
-            {"id": 1, "text": "a", "category_emoji": "📝", "due_date": "2026-03-05", "due_time": None, "is_routine": False},
-            {"id": 2, "text": "b", "category_emoji": "📝", "due_date": "2026-03-05", "due_time": None, "is_routine": False},
-            {"id": 3, "text": "r", "category_emoji": "🔁", "due_date": None, "due_time": None, "is_routine": True, "repeat_day": "пн"},
+            {
+                "text": "шаг",
+                "category_emoji": "📝",
+                "project_id": 1,
+                "project_emoji": "🏗",
+                "project_title": "Ремонт",
+                "due_date": "2026-03-05",
+                "due_time": None,
+                "is_routine": False,
+            },
         ]
         result = _format_task_list(tasks)
-        # Без даты и рутина сортируются перед датой «2026-03-05» → глоб. 1 = рутина.
-        assert "_(глоб. 1)_" in result and "_(глоб. 2)_" in result and "_(глоб. 3)_" in result
-
-    def test_global_numbers_are_contiguous(self):
-        """Глобальные номера в одном ответе бота всегда 1…N без дыр."""
-        tasks = [
-            {"id": i, "text": f"t{i}", "category_emoji": "📝", "due_date": f"2026-03-{i+1:02d}", "due_time": None, "is_routine": False}
-            for i in range(1, 5)
-        ]
-        result = _format_task_list(tasks)
-        for g in range(1, 5):
-            assert f"_(глоб. {g})_" in result
+        assert "🏗" in result
+        assert "проект" in result.lower()
 
 
 class TestBuildConfirmation:
@@ -200,7 +195,7 @@ class TestBuildConfirmation:
 
 
 class TestFormatTodayList:
-    """Список на сегодня с нумерацией (_format_today_list). Принимает список пар (номер, задача)."""
+    """Список на сегодня (_format_today_list). Пары (номер в общем порядке, задача) — номер не выводится."""
 
     def test_empty(self):
         result = _format_today_list([])
@@ -213,7 +208,7 @@ class TestFormatTodayList:
         ]
         result = _format_today_list(ordered_today)
         assert "позвонить" in result and "встреча" in result
-        assert "2." in result and "5." in result
+        assert "•" in result
         assert "Утро" in result
 
 
@@ -289,12 +284,3 @@ class TestTaskTimeBucket:
         assert nums == [2, 3, 1]
 
 
-class TestExtractUncompleteNumber:
-    """Извлечение номера для отмены выполнения."""
-
-    def test_with_number(self):
-        assert _extract_uncomplete_number("отменить выполнение 1") == 1
-        assert _extract_uncomplete_number("вернуть задачу номер 2") == 2
-
-    def test_no_number(self):
-        assert _extract_uncomplete_number("отменить выполнение") is None

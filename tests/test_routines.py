@@ -141,4 +141,5 @@ class TestFormatRepeatDayDisplay:
     def test_multiple_days(self):
         import db
         out = db.format_repeat_day_display("вт,чт")
-        assert "вторник" in out and "четверг" in out
+        assert "вт" in out and "чт" in out
+        assert "(нед.)" in out

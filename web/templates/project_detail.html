@@ -6,7 +6,7 @@
   <a href="/projects" class="muted">← Все проекты</a>
 </nav>
 <h1 class="page-heading"><span class="project-heading-emoji">{{ project.emoji or "📁" }}</span> {{ project.title }}</h1>
-<p class="muted">Новый шаг по умолчанию без срока и с категорией «Большие проекты»; в «Сегодня» шаг попадёт только после назначения даты. Отметка выполнения — по глобальным номерам, как в «Все задачи».</p>
+<p class="muted">Новый шаг по умолчанию без срока и с категорией «Большие проекты»; в «Сегодня» шаг попадёт только после назначения даты. Отметка выполнения — галочками, как на странице «Сегодня».</p>
 
 <section class="card">
   <h2 class="home-section-title">Новая задача в проекте</h2>
@@ -28,9 +28,8 @@
       {% for row in rows %}
       <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="0">
         <div class="task-line-row task-line-row--list">
-          <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="pcb{{ row.task_id }}" form="form-complete-project" draggable="false">
+          <input class="task-cb" type="checkbox" name="task_id" value="{{ row.task_id }}" id="pcb{{ row.task_id }}" form="form-complete-project" draggable="false">
           <label class="task-num-emoji task-num-emoji--static" for="pcb{{ row.task_id }}" draggable="false">
-            <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </label>
           <div class="task-line-center task-line-center--stack">

@@ -3,7 +3,7 @@
 {% block top_title %}Все задачи{% endblock %}
 {% block content %}
 <h1 class="page-heading">Все задачи</h1>
-<p class="muted">Номера как в боте. Двойной щелчок — правка. Перетащи строку (не меню ⋯) на другую дату. Меню ⋯ — категория, рутина, перенос.</p>
+<p class="muted">Двойной щелчок — правка. Перетащи строку (не меню ⋯) на другую дату. Меню ⋯ — категория, рутина, перенос.</p>
 
 {% if empty %}
 <p class="muted">Нет активных задач.</p>
@@ -17,7 +17,6 @@
       <li class="task-line drag-enabled" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row task-line-row--list">
           <div class="task-num-emoji task-num-emoji--static" draggable="false">
-            <span class="num">{{ row.num }}.</span>
             <span class="emoji">{{ row.emoji }}</span>
           </div>
           <div class="task-line-center task-line-center--stack">

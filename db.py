@@ -821,7 +821,7 @@ _REPEAT_DAY_DISPLAY = {
 
 
 def format_repeat_day_display(repeat_day: str | None) -> str:
-    """Форматирует repeat_day для отображения пользователю («Каждый понедельник», «Ежедневно», «Вторник и четверг»)."""
+    """Краткая подпись расписания: один день — как раньше; несколько — «пн · ср · пт (нед.)»."""
     if not repeat_day or not (repeat_day := repeat_day.strip()):
         return "—"
     if repeat_day.lower() == "ежедневно":
@@ -829,10 +829,10 @@ def format_repeat_day_display(repeat_day: str | None) -> str:
     parts = [d.strip().lower() for d in repeat_day.split(",") if d.strip()]
     if not parts:
         return repeat_day
-    labels = [_REPEAT_DAY_DISPLAY.get(p, p) for p in parts]
-    if len(labels) == 1:
-        return labels[0]
-    return " и ".join(labels)
+    if len(parts) == 1:
+        return _REPEAT_DAY_DISPLAY.get(parts[0], parts[0])
+    short = " · ".join(parts)
+    return f"{short} (нед.)"
 
 
 def _routine_matches_today(task: dict, today_weekday: int) -> bool:

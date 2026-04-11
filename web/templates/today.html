@@ -5,7 +5,7 @@
 <h1 class="page-heading">План на сегодня</h1>
 
 {% if request.query_params.get('err') == 'complete' %}
-<p class="flash err">Выбери задачи или проверь номера.</p>
+<p class="flash err">Отметь хотя бы одну задачу.</p>
 {% endif %}
 
 {% if empty %}
@@ -24,9 +24,8 @@
       {% for row in sec.rows %}
       <li class="task-line drag-enabled" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row">
-          <input class="task-cb" type="checkbox" name="num" value="{{ row.num }}" id="cb{{ row.num }}" form="form-complete-today" draggable="false">
-          <label class="task-num-emoji" for="cb{{ row.num }}" draggable="false">
-            <span class="num">{{ row.num }}.</span>
+          <input class="task-cb" type="checkbox" name="task_id" value="{{ row.task_id }}" id="cb{{ row.task_id }}" form="form-complete-today" draggable="false">
+          <label class="task-num-emoji" for="cb{{ row.task_id }}" draggable="false">
             <span class="emoji">{{ row.emoji }}</span>
           </label>
           <div class="task-line-center task-line-center--stack">

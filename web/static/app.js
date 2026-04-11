@@ -266,6 +266,33 @@
         });
         return;
       }
+      if (action === "save-repeat-days") {
+        var box = btn.closest(".routine-repeat-box");
+        if (!box) return;
+        var daily = box.querySelector(".routine-daily-cb");
+        var weekdays = box.querySelectorAll(".routine-weekday-cb:checked");
+        if (daily && daily.checked) {
+          fd.append("repeat_day", "ежедневно");
+        } else {
+          if (!weekdays.length) {
+            window.alert("Отметь «Ежедневно» или хотя бы один день недели.");
+            return;
+          }
+          fd.append(
+            "repeat_day",
+            Array.from(weekdays)
+              .map(function (c) {
+                return c.value;
+              })
+              .join(",")
+          );
+        }
+        postTaskAction("/tasks/set_repeat_day", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
     });
 
     document.addEventListener(
@@ -284,6 +311,24 @@
     );
 
     document.addEventListener("change", function (e) {
+      var dailyT = e.target.closest(".routine-daily-cb");
+      if (dailyT && dailyT.checked) {
+        var bx = dailyT.closest(".routine-repeat-box");
+        if (bx) {
+          bx.querySelectorAll(".routine-weekday-cb").forEach(function (c) {
+            c.checked = false;
+          });
+        }
+      }
+      var wdT = e.target.closest(".routine-weekday-cb");
+      if (wdT && wdT.checked) {
+        var bx2 = wdT.closest(".routine-repeat-box");
+        if (bx2) {
+          var dcb = bx2.querySelector(".routine-daily-cb");
+          if (dcb) dcb.checked = false;
+        }
+      }
+
       var cat = e.target.closest(".task-category-select");
       if (cat) {
         var line = cat.closest(".task-line");
@@ -295,17 +340,6 @@
           else window.alert(data.message || "Ошибка");
         });
         return;
-      }
-      var rep = e.target.closest(".task-repeat-select");
-      if (rep) {
-        var line2 = rep.closest(".task-line");
-        if (!line2 || !rep.value) return;
-        var fd2 = taskFd(line2);
-        fd2.append("repeat_day", rep.value);
-        postTaskAction("/tasks/set_repeat_day", fd2).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
       }
     });
 

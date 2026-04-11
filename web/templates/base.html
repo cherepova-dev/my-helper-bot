@@ -25,6 +25,7 @@
         <a href="/reports/today" class="nav-link{% if path == '/reports/today' %} is-active{% endif %}">Сделано сегодня</a>
         <a href="/reports/week" class="nav-link{% if path == '/reports/week' %} is-active{% endif %}">За неделю</a>
         <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Ещё</span></div>
+        <a href="/settings" class="nav-link{% if path.startswith('/settings') %} is-active{% endif %}">Настройки</a>
         <a href="/categories" class="nav-link{% if path.startswith('/categories') %} is-active{% endif %}">Категории</a>
         <a href="/actions" class="nav-link{% if path.startswith('/actions') %} is-active{% endif %}">Действия с задачами</a>
         <a href="/help" class="nav-link{% if path.startswith('/help') %} is-active{% endif %}">Справка</a>

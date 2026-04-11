@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Настройки{% endblock %}
+{% block top_title %}Настройки{% endblock %}
+{% block content %}
+<h1 class="page-heading">Настройки</h1>
+
+<form method="post" action="/settings" class="card stack-form settings-form">
+  <h2 class="home-section-title">Планирование</h2>
+  <label class="settings-field">
+    <span class="settings-label">Максимум задач в день</span>
+    <span class="muted settings-hint">При автоподборе даты новые задачи попадают на первый день, где активных задач меньше этого числа (по умолчанию 7).</span>
+    <input type="number" name="max_tasks_per_day" min="1" max="50" value="{{ max_tasks_per_day }}" required class="composer-input input-narrow">
+  </label>
+  <button type="submit" class="btn-primary">Сохранить</button>
+</form>
+{% endblock %}

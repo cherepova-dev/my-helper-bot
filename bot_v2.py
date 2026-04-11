@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 
 # Состояние: после /add следующее сообщение = текст задачи. Ключ = telegram user id.
 _awaiting_task: dict[int, bool] = {}
-# После /done следующее сообщение = номер или название задачи для выполнения.
+# После /done следующее сообщение = фрагмент названия задачи для выполнения.
 _awaiting_done: dict[int, bool] = {}
 
 BOT_COMMANDS = [
@@ -95,17 +95,13 @@ HELP_TEXT = (
     "• Несколько раз в неделю без дней: «массаж два раза в неделю», «йога 3 раза в неделю»\n"
     "• Время суток: «по утрам», «по вечерам», «утром», «вечером», «днём» — в «План на сегодня» и «Рутины» блоки *Утро / День / Вечер*; у обычных задач ещё помогает время «в 14:00».\n\n"
     "*Как выполнить задачу*\n"
-    "• «Отметь 3» — по *глобальному* номеру в последнем списке «Список задач»\n"
-    "• Несколько сразу: «Отметь 1, 2 и 3», «Выполни 1 4 5», «Отметь 1-3»\n"
-    "• «Выполни купить молоко» — по названию\n"
-    "• «Отметить задачу номер 1», «Отметить выполнение 2»\n\n"
-    "*Как выполнить рутину*\n"
-    "• Так же, как задачу: «Отметь N» по номеру в плане на сегодня. После выполнения рутина исчезнет из списка на сегодня и снова появится в свой день.\n\n"
+    "• «Выполни купить молоко» — по части названия (как в списке задач)\n"
+    "• После выполнения рутина исчезнет из плана на сегодня и снова появится в свой день.\n\n"
     "*Как удалить задачу или рутину*\n"
-    "• «Удали задачу 3» — по *глоб.* номеру из «Список задач»\n"
+    "• «Удали задачу 3» — по номеру в формулировке команды (как в подсказках бота)\n"
     "• «Удали рутину 2» — по номеру в экране «Рутины» (/routines)\n\n"
     "*Как изменить задачу*\n"
-    "• «Изменить задачу 2 на Купить хлеб» — новый текст (номер — *глобальный* из «Список задач»)\n"
+    "• «Изменить задачу 2 на Купить хлеб» — новый текст (цифра — порядковый номер в команде, см. подсказки бота)\n"
     "• «Изменить рутину 3 на вечер» / «… на утро» / «… на день» / «… на ночь» — только время суток\n"
     "• «Изменить задачу 5 на без времени» — сбросить период суток\n"
     "• «Исправить купить молоко на Купить хлеб»\n\n"
@@ -117,11 +113,9 @@ HELP_TEXT = (
     "• «Все задачи»: перетащи строку на другую дату или в «Без срока» (рутины — только на дату).\n"
     "• «Проекты»: большие дела разбиваешь на шаги; шаги ведут себя как обычные задачи и помечаются в списках.\n\n"
     "*Отменить выполнение*\n"
-    "• «Отменить выполнение 1» — вернуть задачу из «Сделано сегодня» в активные\n\n"
+    "• «Отменить выполнение [часть названия]» — вернуть задачу из «Сделано сегодня» в активные\n\n"
     "*Списки и отчёты*\n"
-    "• «Список задач», «План на сегодня», «Рутины»\n"
-    "• В списке у каждого дня: локальный номер + _(глоб. N)_ — команды «отметь» используют *глоб.* N.\n"
-    "• Номера в старых сообщениях чата не обновляются — ориентируйся на последний список.\n"
+    "• «Список задач», «План на сегодня», «Рутины» — без номеров; для «выполни» используй слова из названия.\n"
     "• «Сделано сегодня», «Сделано за неделю» — по категориям с иконками; за неделю сводка, дата·время факта, повторы рутин и короткий разбор.\n\n"
     "*Перенос даты*\n"
     "• «Перенеси задачу 6 на второе апреля», «на 2 апреля», «на 15.05»\n"
@@ -154,8 +148,11 @@ SYN_ROUTINES = (
     "рутины", "мои рутины", "покажи рутины", "список рутин", "регулярные дела",
 )
 SYN_UNCOMPLETE = (
-    "отменить выполнение", "вернуть задачу", "отменить выполнение задачи",
-    "вернуть в список", "отменить выполнение задачи номер",
+    "отменить выполнение задачи номер",
+    "отменить выполнение задачи",
+    "отменить выполнение",
+    "вернуть в список",
+    "вернуть задачу",
 )
 SYN_HELP = (
     "помощь", "справка", "как пользоваться", "что умеешь", "команды",
@@ -167,8 +164,8 @@ SYN_HELP = (
 ONBOARDING_V2 = (
     "Привет! Я помощник по задачам.\n\n"
     "*Добавить задачу:* «Добавить задачу» → текст задачи или: «Добавь [задача]», «Создай [задача]».\n\n"
-    "*Список задач* — все активные (с номерами). *План на сегодня* — на сегодня.\n\n"
-    "*Выполнить:* «Отметь 3» или «Выполни [название]» — по номеру из списка или по названию.\n\n"
+    "*Список задач* — все активные. *План на сегодня* — на сегодня.\n\n"
+    "*Выполнить:* «Выполни [часть названия]».\n\n"
     "*Отчёты:* «Сделано сегодня» / «Сделано за неделю»."
 )
 
@@ -300,8 +297,16 @@ def _group_tasks_by_time_bucket(
     return out
 
 
-def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
-    """Форматирует список активных задач: нумерация, группировка по дате, блок «Рутины» с регулярностью (RT-F7)."""
+def _task_line_emoji(t: dict) -> str:
+    if t.get("is_routine"):
+        return (t.get("category_emoji") or "🔁").strip() or "🔁"
+    if t.get("project_id"):
+        return ((t.get("project_emoji") or "📁").strip() or "📁")
+    return (t.get("category_emoji") or "📝").strip() or "📝"
+
+
+def _format_task_list(tasks: list[dict]) -> str:
+    """Список активных задач: группировка по дате, блок «Рутины», без номеров."""
     if not tasks:
         return "_Пока нет активных задач. Добавь задачу через меню или напиши «Добавь [задача]»._"
 
@@ -311,7 +316,7 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
         return (d, ti, t.get("id", 0))
 
     sorted_tasks = sorted(tasks, key=sort_key)
-    numbered = list(enumerate(sorted_tasks, start=1))  # [(1, t), (2, t), ...]
+    numbered = list(enumerate(sorted_tasks, start=1))
 
     regular = [(num, t) for num, t in numbered if not t.get("is_routine")]
     routines_list = [(num, t) for num, t in numbered if t.get("is_routine")]
@@ -331,40 +336,32 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
         group = by_date[date_str]
         label = _format_date_human(date_str)
         lines.append(f"*📅 {label}*")
-        for loc_i, (num, t) in enumerate(group, start=1):
-            emoji = t.get("category_emoji") or "📝"
+        for _loc_i, (_num, t) in enumerate(group, start=1):
+            emoji = _task_line_emoji(t)
             text = t["text"]
             time_part = ""
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
-            if with_numbers:
-                prefix = f"{loc_i}. _(глоб. {num})_ "
-            else:
-                prefix = ""
             proj = ""
             if t.get("project_title"):
                 pe = t.get("project_emoji") or "📁"
                 proj = f" _(проект: {pe} {t['project_title']})_"
-            lines.append(f"{prefix}{emoji} {text}{time_part}{proj}")
+            lines.append(f"{emoji} {text}{time_part}{proj}")
         lines.append("")
 
     if "" in by_date:
         lines.append("*📅 Без срока*")
-        for loc_i, (num, t) in enumerate(by_date[""], start=1):
-            emoji = t.get("category_emoji") or "📝"
+        for _loc_i, (_num, t) in enumerate(by_date[""], start=1):
+            emoji = _task_line_emoji(t)
             text = t["text"]
             time_part = ""
             if t.get("due_time"):
                 time_part = f" в {_format_time_human(t['due_time'])}"
-            if with_numbers:
-                prefix = f"{loc_i}. _(глоб. {num})_ "
-            else:
-                prefix = ""
             proj = ""
             if t.get("project_title"):
                 pe = t.get("project_emoji") or "📁"
                 proj = f" _(проект: {pe} {t['project_title']})_"
-            lines.append(f"{prefix}{emoji} {text}{time_part}{proj}")
+            lines.append(f"{emoji} {text}{time_part}{proj}")
         lines.append("")
 
     if routines_list:
@@ -374,23 +371,19 @@ def _format_task_list(tasks: list[dict], with_numbers: bool = True) -> str:
             if bucket:
                 lines.append(_TIME_BUCKET_HEADER[bucket])
                 lines.append("")
-            for loc_i, (num, t) in enumerate(pairs, start=1):
-                emoji = t.get("category_emoji") or "🔁"
+            for _loc_i, (_num, t) in enumerate(pairs, start=1):
+                emoji = _task_line_emoji(t)
                 text = t["text"]
                 repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
                 tod_part = ""
                 td = (t.get("time_of_day") or "").strip()
                 if td and not bucket:
                     tod_part = f" · _{td}_"
-                if with_numbers:
-                    prefix = f"{loc_i}. _(глоб. {num})_ "
-                else:
-                    prefix = ""
                 proj = ""
                 if t.get("project_title"):
                     pe = t.get("project_emoji") or "📁"
                     proj = f" · _{pe} {t['project_title']}_"
-                lines.append(f"{prefix}{emoji} {text}{tod_part} — _{repeat_label}_{proj}")
+                lines.append(f"{emoji} {text}{tod_part} — _{repeat_label}_{proj}")
             lines.append("")
 
     return "\n".join(lines).strip()
@@ -580,23 +573,23 @@ async def cmd_routines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if bucket:
             lines.append(_TIME_BUCKET_HEADER[bucket])
             lines.append("")
-        for num, t in group:
+        for _num, t in group:
             repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
-            emoji = t.get("category_emoji") or "🔁"
-            lines.append(f"{num}. {emoji} {t['text']} — _{repeat_label}_")
+            emoji = _task_line_emoji(t)
+            lines.append(f"• {emoji} {t['text']} — _{repeat_label}_")
         lines.append("")
     await _reply(update, "\n".join(lines).rstrip())
 
 
 def _format_today_list(ordered_today: list[tuple[int, dict]], title: str = "📅 *План на сегодня*") -> str:
-    """Список задач на сегодня: блоки утро/день/вечер, номера как в общем списке."""
+    """Список задач на сегодня: блоки утро/день/вечер, без номеров."""
     lines = [f"{title}\n"]
     for bucket, pairs in _group_tasks_by_time_bucket(ordered_today):
         if bucket:
             lines.append(_TIME_BUCKET_HEADER[bucket])
             lines.append("")
-        for num, t in pairs:
-            emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
+        for _num, t in pairs:
+            emoji = _task_line_emoji(t)
             time_part = f" в {_format_time_human(t['due_time'])}" if t.get("due_time") else ""
             tod_hint = ""
             td = (t.get("time_of_day") or "").strip()
@@ -606,7 +599,7 @@ def _format_today_list(ordered_today: list[tuple[int, dict]], title: str = "📅
             if t.get("project_title"):
                 pe = t.get("project_emoji") or "📁"
                 proj = f" · _{pe} {t['project_title']}_"
-            lines.append(f"{num}. {emoji} {t['text']}{time_part}{tod_hint}{proj}")
+            lines.append(f"• {emoji} {t['text']}{time_part}{tod_hint}{proj}")
         if bucket:
             lines.append("")
     return "\n".join(lines).rstrip()
@@ -631,7 +624,8 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _awaiting_done[user.id] = True
     await _reply(
         update,
-        "Напиши *номер* задачи из списка (например: _1_ или _3_) или часть названия.\n"
+        "Напиши *часть названия* задачи, которую отметить выполненной "
+        "(например: _выполни купить молоко_).\n"
         "Следующее сообщение я восприму как указание, какую задачу отметить выполненной.",
     )
 
@@ -1003,7 +997,7 @@ async def cmd_done_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def _handle_complete(
     update: Update, user_row: dict, text: str
 ) -> None:
-    """Обработка «отметь N» / «выполни название»: по номеру или по тексту, при нескольких — уточнение."""
+    """Обработка «выполни [название]»: по тексту; при нескольких совпадениях — уточнение."""
     uid = user_row["id"]
     nums, num, rest = extract_done_targets(text)
     ordered = _active_tasks_display_order(uid)
@@ -1011,60 +1005,19 @@ async def _handle_complete(
         await _reply(update, "Нет активных задач для выполнения.")
         return
 
-    if nums:
-        ok_titles: list[str] = []
-        fail_nums: list[int] = []
-        for n in sorted(set(nums)):
-            if 1 <= n <= len(ordered):
-                task = ordered[n - 1]
-                if db.complete_task(task["id"], uid, task=task):
-                    ok_titles.append(task["text"])
-                else:
-                    fail_nums.append(n)
-            else:
-                fail_nums.append(n)
-        parts: list[str] = []
-        if ok_titles:
-            shown = ok_titles[:12]
-            tail = " …" if len(ok_titles) > 12 else ""
-            parts.append(
-                f"🔥 Отмечено ({len(ok_titles)}): "
-                + ", ".join(f"«{t}»" for t in shown)
-                + tail
-            )
-        if fail_nums:
-            parts.append(
-                f"Не получилось для номеров: {', '.join(str(x) for x in sorted(set(fail_nums)))} "
-                f"(в списке 1–{len(ordered)})."
-            )
-        hint = (
-            "\n\n_Команды «отметь» используют глобальный номер _(глоб. N)_ из «Список задач»; "
-            "в чате смотри последний список._"
+    if nums or num is not None:
+        await _reply(
+            update,
+            "Отметка по номеру отключена. Напиши часть названия задачи, например: "
+            "_«Выполни купить молоко»_.",
         )
-        await _reply(update, "\n".join(parts) + hint)
-        if ok_titles:
-            await _send_remaining_today(update, uid)
-        return
-
-    # По номеру
-    if num is not None:
-        if 1 <= num <= len(ordered):
-            task = ordered[num - 1]
-            if db.complete_task(task["id"], uid, task=task):
-                await _reply(
-                    update,
-                    f"🔥 Выполнено: «{task['text']}»\n\n"
-                    "_Номера — по глоб. номеру в последнем «Список задач»._",
-                )
-                await _send_remaining_today(update, uid)
-            else:
-                await _reply(update, "Не удалось отметить задачу.")
-        else:
-            await _reply(update, f"Нет задачи с номером {num}. В списке задач от 1 до {len(ordered)}.")
         return
     # По названию
     if not rest:
-        await _reply(update, "Напиши номер задачи или часть названия. Например: «Отметь 3» или «Выполни купить молоко».")
+        await _reply(
+            update,
+            "Напиши часть названия задачи, например: _«Выполни купить молоко»_.",
+        )
         return
     # Голос может дать «зарегистрировать домен или отогнать машину» — пробуем по частям до первого однозначного
     search_phrases = [s.strip() for s in rest.split(" или ") if s.strip()]
@@ -1090,67 +1043,64 @@ async def _handle_complete(
     if len(matches) == 1:
         task = matches[0]
         if db.complete_task(task["id"], uid, task=task):
-            await _reply(
-                update,
-                f"🔥 Выполнено: «{task['text']}»\n\n"
-                "_Номера — по глоб. номеру в последнем «Список задач»._",
-            )
+            await _reply(update, f"🔥 Выполнено: «{task['text']}»")
             await _send_remaining_today(update, uid)
         else:
             await _reply(update, "Не удалось отметить задачу.")
         return
-    # Несколько совпадений — показать номера и попросить уточнить
-    ordered_ids = {t["id"]: i for i, t in enumerate(ordered, start=1)}
     parts = []
     for t in matches:
-        n = ordered_ids.get(t["id"], "?")
-        parts.append(f"{n}. {t['text']}")
+        em = _task_line_emoji(t)
+        parts.append(f"• {em} {t['text']}")
     msg = (
         f"Найдено задач: {len(matches)}.\n\n"
         + "\n".join(parts)
-        + "\n\n_Уточните, какую отметить: напишите номер (например, 1 или 4)._"
+        + "\n\n_Уточни формулировку, чтобы совпала одна задача (добавь слова из названия)._"
     )
     await _reply(update, msg)
 
 
-def _extract_uncomplete_number(text: str) -> int | None:
-    """Из «отменить выполнение 1», «вернуть задачу номер 2» извлекает номер (1-based)."""
-    import re
-    lower = text.strip().lower()
-    for syn in SYN_UNCOMPLETE:
-        if syn in lower:
-            rest = text[lower.index(syn) + len(syn):].strip()
-            rest = re.sub(r"^(?:задач[уа]\.?\s*)?(?:номер\s*)?", "", rest, flags=re.IGNORECASE).strip()
-            m = re.match(r"^(\d+)", rest)
-            if m:
-                return int(m.group(1))
-            return None
-    return None
-
-
 async def _handle_uncomplete(update: Update, user_row: dict, text: str) -> None:
-    """Отмена выполнения: вернуть задачу в активные (из списка «Сделано сегодня»)."""
+    """Отмена выполнения: вернуть задачу в активные (из списка «Сделано сегодня») по фрагменту названия."""
+    import re
+
     uid = user_row["id"]
     done_tasks = db.get_done_tasks_today(uid)
     if not done_tasks:
         await _reply(update, "Сегодня пока нет выполненных задач. Нечего отменять.")
         return
-    num = _extract_uncomplete_number(text)
-    if num is None:
-        lines = ["Выполнено сегодня (укажи номер для отмены):\n"]
-        for i, t in enumerate(done_tasks, start=1):
-            lines.append(f"{i}. {t.get('text', '')}")
-        lines.append("\n_Напиши, например: «Отменить выполнение 1»_")
+
+    lower = text.strip().lower()
+    rest = ""
+    for syn in SYN_UNCOMPLETE:
+        if syn in lower:
+            rest = text[lower.index(syn) + len(syn) :].strip()
+            rest = re.sub(r"^(?:задач[уа]\.?\s*)?(?:номер\s*)?", "", rest, flags=re.IGNORECASE).strip()
+            break
+
+    if not rest:
+        lines = [
+            "Выполнено сегодня. Чтобы вернуть задачу в активные, напиши, например:\n"
+            "_«Отменить выполнение [часть названия]»_\n"
+        ]
+        for t in done_tasks:
+            lines.append(f"• {t.get('text', '')}")
         await _reply(update, "\n".join(lines))
         return
-    if 1 <= num <= len(done_tasks):
-        task = done_tasks[num - 1]
-        if db.uncomplete_task(task["id"], uid):
-            await _reply(update, f"↩️ Задача «{task.get('text', '')}» снова в списке активных.")
-        else:
-            await _reply(update, "Не удалось отменить выполнение.")
+
+    q = rest.lower()
+    matches = [t for t in done_tasks if q in (t.get("text") or "").lower()]
+    if len(matches) > 1:
+        await _reply(update, "Найдено несколько совпадений — уточни фразу из названия.")
+        return
+    if len(matches) == 0:
+        await _reply(update, "Не нашла такую задачу среди выполненных сегодня.")
+        return
+    task = matches[0]
+    if db.uncomplete_task(task["id"], uid):
+        await _reply(update, f"↩️ Задача «{task.get('text', '')}» снова в списке активных.")
     else:
-        await _reply(update, f"Нет задачи с номером {num}. В списке выполненных сегодня от 1 до {len(done_tasks)}.")
+        await _reply(update, "Не удалось отменить выполнение.")
 
 
 def _resolve_task_by_num_or_search(uid: int, num: int | None, search_text: str | None) -> dict | None:

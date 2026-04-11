@@ -17,21 +17,23 @@
     </div>
     {% endif %}
     {% if row.is_routine %}
-    <div class="task-menu-row-select">
-      <label class="task-menu-label" for="rep-{{ row.task_id }}">Расписание</label>
-      <select id="rep-{{ row.task_id }}" class="task-repeat-select" aria-label="Расписание рутины" draggable="false">
-        {% set rd = row.repeat_day or '' %}
-        <option value="" {% if (not rd) or (',' in rd) or rd.startswith('N_WEEK') %}selected{% endif %}>— изменить на —</option>
-        <option value="ежедневно" {% if rd == 'ежедневно' %}selected{% endif %}>Ежедневно</option>
-        <option value="пн" {% if rd == 'пн' %}selected{% endif %}>Понедельник</option>
-        <option value="вт" {% if rd == 'вт' %}selected{% endif %}>Вторник</option>
-        <option value="ср" {% if rd == 'ср' %}selected{% endif %}>Среда</option>
-        <option value="чт" {% if rd == 'чт' %}selected{% endif %}>Четверг</option>
-        <option value="пт" {% if rd == 'пт' %}selected{% endif %}>Пятница</option>
-        <option value="сб" {% if rd == 'сб' %}selected{% endif %}>Суббота</option>
-        <option value="вс" {% if rd == 'вс' %}selected{% endif %}>Воскресенье</option>
-        <option value="раз в неделю">Раз в неделю (случайный день)</option>
-      </select>
+    {% set rd = row.repeat_day or '' %}
+    {% set rdc = row.repeat_day_codes if row.repeat_day_codes is defined else [] %}
+    <div class="routine-repeat-box" data-task-id="{{ row.task_id }}">
+      <span class="task-menu-label">Расписание</span>
+      <label class="routine-daily-row">
+        <input type="checkbox" class="routine-dow-cb routine-daily-cb" value="ежедневно" {% if rd == 'ежедневно' %}checked{% endif %} draggable="false">
+        Ежедневно
+      </label>
+      <div class="routine-dow-grid" aria-label="Дни недели">
+        {% for code, label in [('пн','Пн'),('вт','Вт'),('ср','Ср'),('чт','Чт'),('пт','Пт'),('сб','Сб'),('вс','Вс')] %}
+        <label class="routine-dow-item">
+          <input type="checkbox" class="routine-dow-cb routine-weekday-cb" value="{{ code }}" {% if code in rdc %}checked{% endif %} draggable="false">
+          {{ label }}
+        </label>
+        {% endfor %}
+      </div>
+      <button type="button" class="task-menu-item routine-repeat-save" data-action="save-repeat-days">Сохранить расписание</button>
     </div>
     {% endif %}
     <button type="button" class="task-menu-item" data-action="edit-text">Изменить текст</button>

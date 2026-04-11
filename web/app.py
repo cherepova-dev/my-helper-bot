@@ -39,18 +39,17 @@ from task_commands import (
     add_task_from_text,
     apply_edit_phrase,
     apply_reschedule_phrase,
-    complete_task_numbers,
+    complete_task_ids,
     delete_task_by_id,
     delete_task_by_number,
     move_task_tasks_page_by_id,
-    parse_number_list,
     reschedule_task_by_id,
     routine_snooze_from_today_plan,
     set_task_category_by_id,
     set_task_repeat_day_by_id,
     set_task_routine_kind_by_id,
     set_task_time_bucket_by_id,
-    uncomplete_done_today,
+    uncomplete_done_today_by_id,
     update_task_text_by_id,
 )
 
@@ -247,6 +246,7 @@ _FLASH_PATHS = frozenset(
         "/reports/today",
         "/reports/week",
         "/projects",
+        "/settings",
     }
 )
 
@@ -269,6 +269,21 @@ def _category_choices(uid: int) -> list[dict]:
     if not any(c["name"] == "Другое" for c in out):
         out.append({"name": "Другое", "emoji": "📝"})
     return out
+
+
+def _task_row_emoji(t: dict) -> str:
+    if t.get("is_routine"):
+        return (t.get("category_emoji") or "🔁").strip() or "🔁"
+    if t.get("project_id"):
+        return ((t.get("project_emoji") or "📁").strip() or "📁")
+    return (t.get("category_emoji") or "📝").strip() or "📝"
+
+
+def _repeat_day_codes(rd: str | None) -> list[str]:
+    s = (rd or "").strip().lower()
+    if not s or s == "ежедневно":
+        return []
+    return [p.strip() for p in s.split(",") if p.strip()]
 
 
 def _category_edit_rows(uid: int) -> list[dict]:
@@ -420,8 +435,8 @@ async def page_today(request: Request):
         for bucket in _order:
             pairs = sorted(buckets[bucket], key=_sort_key)
             rows = []
-            for num, t in pairs:
-                emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
+            for _num, t in pairs:
+                emoji = _task_row_emoji(t)
                 time_part = ""
                 if t.get("due_time"):
                     time_part = f"в {_format_time_human(t['due_time'])}"
@@ -429,16 +444,17 @@ async def page_today(request: Request):
                 if t.get("project_title"):
                     pe = (t.get("project_emoji") or "📁").strip() or "📁"
                     pl = f"{pe} {t['project_title']}".strip()
+                rd = (t.get("repeat_day") or "").strip()
                 rows.append(
                     {
-                        "num": num,
                         "emoji": emoji,
                         "text": t["text"],
                         "time_part": time_part,
                         "task_id": t["id"],
                         "is_routine": bool(t.get("is_routine")),
                         "category_name": (t.get("category_name") or "").strip(),
-                        "repeat_day": (t.get("repeat_day") or "").strip(),
+                        "repeat_day": rd,
+                        "repeat_day_codes": _repeat_day_codes(rd),
                         "project_label": pl,
                         "kebab_remove_from_plan": bool(t.get("is_routine")),
                     }
@@ -478,7 +494,7 @@ async def page_tasks(request: Request):
     numbered = list(enumerate(tasks, start=1))
 
     def _row_dict(num: int, t: dict) -> dict:
-        emoji = "🔁" if t.get("is_routine") else (t.get("category_emoji") or "📝")
+        emoji = _task_row_emoji(t)
         time_part = ""
         if t.get("due_time"):
             time_part = f"в {_format_time_human(t['due_time'])}"
@@ -492,15 +508,16 @@ async def page_tasks(request: Request):
         if t.get("project_title"):
             pe = (t.get("project_emoji") or "📁").strip() or "📁"
             pl = f"{pe} {t['project_title']}".strip()
+        rd = (t.get("repeat_day") or "").strip()
         return {
-            "num": num,
             "task_id": t["id"],
             "emoji": emoji,
             "text": t["text"],
             "date_right": date_right,
             "is_routine": bool(t.get("is_routine")),
             "category_name": (t.get("category_name") or "").strip(),
-            "repeat_day": (t.get("repeat_day") or "").strip(),
+            "repeat_day": rd,
+            "repeat_day_codes": _repeat_day_codes(rd),
             "project_label": pl,
             "has_project": bool(pl),
         }
@@ -646,15 +663,14 @@ async def page_project_detail(request: Request, project_id: int):
 
     db.transfer_overdue_tasks(uid)
     ordered = _active_tasks_display_order(uid)
-    num_by_id = {t["id"]: i for i, t in enumerate(ordered, start=1)}
+    ordered_ids = {t["id"] for t in ordered}
     tasks = db.get_active_tasks_for_project(uid, project_id)
     db.attach_project_labels(uid, tasks)
     rows: list[dict] = []
     for t in tasks:
-        num = num_by_id.get(t["id"])
-        if num is None:
+        if t["id"] not in ordered_ids:
             continue
-        emoji = t.get("category_emoji") or "📝"
+        emoji = _task_row_emoji(t)
         tp = ""
         if t.get("due_time"):
             tp = f"в {_format_time_human(t['due_time'])}"
@@ -663,7 +679,6 @@ async def page_project_detail(request: Request, project_id: int):
         date_right = " · ".join([x for x in (tp, dh) if x])
         rows.append(
             {
-                "num": num,
                 "task_id": t["id"],
                 "emoji": emoji,
                 "text": t["text"],
@@ -671,6 +686,7 @@ async def page_project_detail(request: Request, project_id: int):
                 "is_routine": False,
                 "category_name": (t.get("category_name") or "").strip(),
                 "repeat_day": "",
+                "repeat_day_codes": [],
                 "has_project": False,
                 "project_label": "",
             }
@@ -743,19 +759,20 @@ async def page_routines(request: Request):
         title = _titles.get(bucket, _titles[""])
         drop_bucket = "none" if bucket == "" else bucket
         rows = []
-        for num, t in group:
+        for _num, t in group:
+            rd = (t.get("repeat_day") or "").strip()
             repeat_label = db.format_repeat_day_display(t.get("repeat_day"))
-            emoji = t.get("category_emoji") or "🔁"
+            emoji = _task_row_emoji(t)
             rows.append(
                 {
-                    "num": num,
                     "task_id": t["id"],
                     "emoji": emoji,
                     "text": t["text"],
                     "repeat_label": repeat_label,
                     "is_routine": True,
                     "category_name": (t.get("category_name") or "").strip(),
-                    "repeat_day": (t.get("repeat_day") or "").strip(),
+                    "repeat_day": rd,
+                    "repeat_day_codes": _repeat_day_codes(rd),
                 }
             )
         sections.append(
@@ -784,12 +801,44 @@ async def page_actions(request: Request):
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row()["id"]
     done = db.get_done_tasks_today(uid)
-    done_items = [{"text": t.get("text", "")} for t in done]
+    done_items = [{"text": t.get("text", ""), "task_id": t["id"]} for t in done]
     return templates.TemplateResponse(
         request,
         "actions.html",
         _ctx(done_items=done_items),
     )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def page_settings(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    s = db.get_settings(uid)
+    try:
+        n = int(s.get("max_tasks_per_day") or 7)
+    except (TypeError, ValueError):
+        n = 7
+    n = max(1, min(50, n))
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        _ctx(max_tasks_per_day=n),
+    )
+
+
+@app.post("/settings")
+async def action_settings(request: Request, max_tasks_per_day: str = Form("7")):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row()["id"]
+    try:
+        n = int(max_tasks_per_day)
+    except (TypeError, ValueError):
+        n = 7
+    n = max(1, min(50, n))
+    db.update_settings(uid, max_tasks_per_day=n)
+    return _flash_redirect(request, "/settings", "Настройки сохранены.", True)
 
 
 @app.get("/reports/week", response_class=HTMLResponse)
@@ -872,11 +921,11 @@ async def action_complete(request: Request):
     if not request.session.get("auth"):
         return RedirectResponse("/login", status_code=302)
     form = await request.form()
-    raw = form.getlist("num")
-    nums: list[int] = []
+    raw = form.getlist("task_id")
+    ids: list[int] = []
     for x in raw:
         try:
-            nums.append(int(x))
+            ids.append(int(x))
         except (TypeError, ValueError):
             pass
     uid = get_user_row()["id"]
@@ -884,11 +933,11 @@ async def action_complete(request: Request):
     path = dest.split("?", 1)[0].rstrip("/") or "/"
     flash_dest = _flash_allowed(path)
 
-    if not nums:
+    if not ids:
         if flash_dest:
-            return _flash_redirect(request, dest, "Выбери задачи или проверь номера.", False)
+            return _flash_redirect(request, dest, "Отметь галочками задачи в списке.", False)
         return RedirectResponse(f"{dest}?err=complete", status_code=302)
-    ok_titles, fail = complete_task_numbers(uid, nums)
+    ok_titles, fail = complete_task_ids(uid, ids)
     if flash_dest:
         if ok_titles and not fail:
             return _flash_redirect(
@@ -898,48 +947,10 @@ async def action_complete(request: Request):
             return _flash_redirect(
                 request,
                 dest,
-                f"Частично: {len(ok_titles)} ок, ошибка по номерам: {fail}.",
+                f"Частично: {len(ok_titles)} ок, не найдены или не отмечены: {fail}.",
                 False,
             )
         return _flash_redirect(request, dest, "Не удалось отметить выбранное.", False)
-    if ok_titles and not fail:
-        return RedirectResponse(f"{dest}?done={len(ok_titles)}", status_code=302)
-    if ok_titles and fail:
-        return RedirectResponse(f"{dest}?done={len(ok_titles)}&fail={len(fail)}", status_code=302)
-    return RedirectResponse(f"{dest}?err=complete", status_code=302)
-
-
-@app.post("/tasks/complete_quick")
-async def action_complete_quick(request: Request, nums: str = Form("")):
-    if not request.session.get("auth"):
-        return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
-    parsed = parse_number_list(nums)
-    dest = request.query_params.get("next", "/today")
-    path = dest.split("?", 1)[0].rstrip("/") or "/"
-    flash_dest = _flash_allowed(path)
-
-    if not parsed:
-        if flash_dest:
-            return _flash_redirect(request, dest, "Укажи номера, например: 1, 2, 3", False)
-        return RedirectResponse(f"{dest}?err=complete", status_code=302)
-
-    ok_titles, fail = complete_task_numbers(uid, parsed)
-    if flash_dest:
-        if ok_titles and not fail:
-            return _flash_redirect(
-                request, dest, f"Отмечено выполненным: {len(ok_titles)}.", True
-            )
-        if ok_titles and fail:
-            return _flash_redirect(
-                request,
-                dest,
-                f"Частично: {len(ok_titles)} ок, ошибка по номерам: {fail}.",
-                False,
-            )
-        return _flash_redirect(
-            request, dest, f"Не удалось отметить номера: {fail}.", False
-        )
     if ok_titles and not fail:
         return RedirectResponse(f"{dest}?done={len(ok_titles)}", status_code=302)
     if ok_titles and fail:
@@ -979,11 +990,11 @@ async def action_reschedule(request: Request, phrase: str = Form("")):
 
 
 @app.post("/tasks/uncomplete")
-async def action_uncomplete(request: Request, num: int = Form(...)):
+async def action_uncomplete(request: Request, task_id: int = Form(...)):
     if not request.session.get("auth"):
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row()["id"]
-    result = uncomplete_done_today(uid, num)
+    result = uncomplete_done_today_by_id(uid, task_id)
     dest = request.query_params.get("next", "/actions")
     return _flash_redirect(request, dest, result["message"], result["ok"])
 
