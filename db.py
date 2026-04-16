@@ -581,6 +581,8 @@ def attach_project_labels(user_id: int, tasks: list[dict]) -> None:
     """Дополняет задачи полями project_title и project_emoji (in-place)."""
     if not tasks:
         return
+    if not any(t.get("project_id") for t in tasks):
+        return
     pmap = get_project_meta_map(user_id)
     for t in tasks:
         pid = t.get("project_id")
@@ -651,6 +653,14 @@ def get_active_tasks(user_id: int) -> list[dict]:
     return _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' ORDER BY priority_score DESC",
         (user_id,),
+    )
+
+
+def get_active_task_by_id(user_id: int, task_id: int) -> dict | None:
+    """Одна активная задача по id (без загрузки всего списка)."""
+    return _fetchone(
+        "SELECT * FROM tasks WHERE id = %s AND user_id = %s AND status = 'active'",
+        (task_id, user_id),
     )
 
 

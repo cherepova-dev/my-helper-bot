@@ -56,6 +56,27 @@ from task_commands import (
 ROOT = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 
+# Не гонять transfer_overdue_tasks на каждый GET (дорого при PostgreSQL и большом списке задач).
+_transfer_overdue_last: dict[int, float] = {}
+_TRANSFER_OVERDUE_INTERVAL = float(os.environ.get("WEB_TRANSFER_OVERDUE_INTERVAL_SEC", "90"))
+
+
+def _maybe_transfer_overdue(uid: int) -> None:
+    if _TRANSFER_OVERDUE_INTERVAL <= 0:
+        db.transfer_overdue_tasks(uid)
+        return
+    import time
+
+    now = time.monotonic()
+    last = _transfer_overdue_last.get(uid, 0.0)
+    if now - last < _TRANSFER_OVERDUE_INTERVAL:
+        return
+    _transfer_overdue_last[uid] = now
+    if len(_transfer_overdue_last) > 4000:
+        _transfer_overdue_last.clear()
+        _transfer_overdue_last[uid] = now
+    db.transfer_overdue_tasks(uid)
+
 
 def _self_ping_url_and_interval() -> tuple[str | None, int]:
     """
@@ -328,7 +349,7 @@ async def page_home(request: Request):
 
     user_row = get_user_row()
     uid = user_row["id"]
-    db.transfer_overdue_tasks(uid)
+    _maybe_transfer_overdue(uid)
     today_tasks = db.get_today_tasks(uid)
     ordered = _active_tasks_display_order(uid)
     today_ids = {t["id"] for t in today_tasks}
@@ -407,7 +428,7 @@ async def page_today(request: Request):
     uid = user_row["id"]
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     local_hour = _user_local_hour(tz_name)
-    db.transfer_overdue_tasks(uid)
+    _maybe_transfer_overdue(uid)
     ordered = _active_tasks_display_order(uid)
     today_tasks = db.get_today_tasks(uid)
     today_ids = {t["id"] for t in today_tasks}
@@ -489,7 +510,7 @@ async def page_tasks(request: Request):
     from bot_v2 import _active_tasks_display_order, _format_date_human, _format_time_human
 
     uid = get_user_row()["id"]
-    db.transfer_overdue_tasks(uid)
+    _maybe_transfer_overdue(uid)
     tasks = _active_tasks_display_order(uid)
     numbered = list(enumerate(tasks, start=1))
 
@@ -661,7 +682,7 @@ async def page_project_detail(request: Request, project_id: int):
         _format_time_human,
     )
 
-    db.transfer_overdue_tasks(uid)
+    _maybe_transfer_overdue(uid)
     ordered = _active_tasks_display_order(uid)
     ordered_ids = {t["id"] for t in ordered}
     tasks = db.get_active_tasks_for_project(uid, project_id)

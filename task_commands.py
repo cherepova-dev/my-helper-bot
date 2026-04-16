@@ -418,12 +418,12 @@ def parse_number_list(s: str) -> list[int]:
 
 
 def _find_task_in_active(user_id: int, task_id: int) -> dict | None:
-    from bot_v2 import _active_tasks_display_order
-
-    for t in _active_tasks_display_order(user_id):
-        if t["id"] == task_id:
-            return t
-    return None
+    """Одна строка из БД вместо загрузки всех активных задач (ускоряет веб-действия)."""
+    task = db.get_active_task_by_id(user_id, task_id)
+    if not task:
+        return None
+    db.attach_project_labels(user_id, [task])
+    return task
 
 
 def routine_snooze_from_today_plan(user_id: int, task_id: int) -> dict[str, Any]:
