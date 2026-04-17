@@ -547,6 +547,47 @@ def count_active_tasks_in_project(user_id: int, project_id: int) -> int:
     return int(row["c"]) if row and row.get("c") is not None else 0
 
 
+def count_active_tasks_by_project(user_id: int) -> dict[int, int]:
+    """Один запрос: сколько активных задач у каждого project_id (для /projects без N+1)."""
+    rows = _fetchall(
+        "SELECT project_id, COUNT(*) AS c FROM tasks "
+        "WHERE user_id = %s AND status = 'active' AND project_id IS NOT NULL "
+        "GROUP BY project_id",
+        (user_id,),
+    )
+    out: dict[int, int] = {}
+    for r in rows:
+        pid = r.get("project_id")
+        if pid is None:
+            continue
+        try:
+            out[int(pid)] = int(r["c"])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def count_active_tasks(user_id: int) -> int:
+    row = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND status = 'active'",
+        (user_id,),
+    )
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
+def count_active_routines(user_id: int) -> int:
+    row = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND status = 'active' AND is_routine = TRUE",
+        (user_id,),
+    )
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
+def count_user_projects(user_id: int) -> int:
+    row = _fetchone("SELECT COUNT(*) AS c FROM projects WHERE user_id = %s", (user_id,))
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
 def get_active_tasks_for_project(user_id: int, project_id: int) -> list[dict]:
     return _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'active' "
@@ -772,6 +813,26 @@ def _get_today_in_user_tz(user_id: int) -> tuple[str, int]:
     else:
         now = datetime.now(timezone.utc)
     return now.strftime("%Y-%m-%d"), now.weekday()  # weekday: 0=Monday, 6=Sunday
+
+
+def _user_today_window_utc(user_id: int) -> tuple[str, str]:
+    """Начало и конец «сегодня» пользователя в UTC (ISO), для отчётов и счётчиков."""
+    today_str, _ = _get_today_in_user_tz(user_id)
+    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
+    tz_name = (row.get("timezone") or "Europe/Moscow").strip() if row else "Europe/Moscow"
+    if ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+            y, m, d = map(int, today_str.split("-"))
+            start = datetime(y, m, d, 0, 0, 0, tzinfo=tz)
+            end = start + timedelta(days=1)
+            return start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat()
+        except Exception:
+            pass
+    start_utc = today_str + "T00:00:00+00:00"
+    end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
+    end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
+    return start_utc, end_utc
 
 
 # День недели для рутин: пн=0, вт=1, ср=2, чт=3, пт=4, сб=5, вс=6 (как в Python weekday)
@@ -1024,27 +1085,27 @@ def get_done_tasks(user_id: int, days: int = 7) -> list[dict]:
     return merged
 
 
+def count_done_tasks_today(user_id: int) -> int:
+    """Число выполненных сегодня (done + рутины с last_completed_at сегодня) без загрузки строк."""
+    start_utc, end_utc = _user_today_window_utc(user_id)
+    row1 = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND status = 'done' "
+        "AND completed_at >= %s AND completed_at < %s",
+        (user_id, start_utc, end_utc),
+    )
+    row2 = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND status = 'active' AND is_routine = TRUE "
+        "AND last_completed_at >= %s AND last_completed_at < %s",
+        (user_id, start_utc, end_utc),
+    )
+    n1 = int(row1["c"]) if row1 and row1.get("c") is not None else 0
+    n2 = int(row2["c"]) if row2 and row2.get("c") is not None else 0
+    return n1 + n2
+
+
 def get_done_tasks_today(user_id: int) -> list[dict]:
     """Выполненные задачи за сегодня: обычные (status=done) и рутины (last_completed_at сегодня)."""
-    today_str, _ = _get_today_in_user_tz(user_id)
-    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
-    tz_name = (row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-    if ZoneInfo is not None:
-        try:
-            tz = ZoneInfo(tz_name)
-            y, m, d = map(int, today_str.split("-"))
-            start = datetime(y, m, d, 0, 0, 0, tzinfo=tz)
-            end = start + timedelta(days=1)
-            start_utc = start.astimezone(timezone.utc).isoformat()
-            end_utc = end.astimezone(timezone.utc).isoformat()
-        except Exception:
-            start_utc = today_str + "T00:00:00+00:00"
-            end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
-            end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
-    else:
-        start_utc = today_str + "T00:00:00+00:00"
-        end_dt = datetime.strptime(today_str, "%Y-%m-%d") + timedelta(days=1)
-        end_utc = end_dt.strftime("%Y-%m-%d") + "T00:00:00+00:00"
+    start_utc, end_utc = _user_today_window_utc(user_id)
     done = _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'done' "
         "AND completed_at >= %s AND completed_at < %s ORDER BY completed_at DESC",

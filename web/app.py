@@ -345,19 +345,17 @@ def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> Redi
 async def page_home(request: Request):
     if not request.session.get("auth"):
         return RedirectResponse("/login", status_code=302)
-    from bot_v2 import _active_tasks_display_order
 
     user_row = get_user_row()
     uid = user_row["id"]
     _maybe_transfer_overdue(uid)
+    # Без _active_tasks_display_order: на главной нужны только числа (COUNT / len «сегодня»).
     today_tasks = db.get_today_tasks(uid)
-    ordered = _active_tasks_display_order(uid)
-    today_ids = {t["id"] for t in today_tasks}
-    n_today = sum(1 for t in ordered if t["id"] in today_ids)
-    n_tasks = len(ordered)
-    n_routines = len(db.get_routine_tasks(uid))
-    n_done_today = len(db.get_done_tasks_today(uid))
-    n_projects = len(db.list_projects(uid))
+    n_today = len(today_tasks)
+    n_tasks = db.count_active_tasks(uid)
+    n_routines = db.count_active_routines(uid)
+    n_done_today = db.count_done_tasks_today(uid)
+    n_projects = db.count_user_projects(uid)
     name = (user_row.get("first_name") or "").strip() or "друг"
     return templates.TemplateResponse(
         request,
@@ -650,6 +648,7 @@ async def page_projects(request: Request):
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row()["id"]
     raw = db.list_projects(uid)
+    counts = db.count_active_tasks_by_project(uid)
     project_rows: list[dict] = []
     for p in raw:
         pid = int(p["id"])
@@ -658,7 +657,7 @@ async def page_projects(request: Request):
                 "id": pid,
                 "title": (p.get("title") or "").strip(),
                 "emoji": ((p.get("emoji") or "📁").strip() or "📁"),
-                "n_active": db.count_active_tasks_in_project(uid, pid),
+                "n_active": counts.get(pid, 0),
             }
         )
     return templates.TemplateResponse(
@@ -676,21 +675,13 @@ async def page_project_detail(request: Request, project_id: int):
     proj = db.get_project(uid, project_id)
     if not proj:
         return RedirectResponse("/projects", status_code=302)
-    from bot_v2 import (
-        _active_tasks_display_order,
-        _format_date_human,
-        _format_time_human,
-    )
+    from bot_v2 import _format_date_human, _format_time_human
 
     _maybe_transfer_overdue(uid)
-    ordered = _active_tasks_display_order(uid)
-    ordered_ids = {t["id"] for t in ordered}
     tasks = db.get_active_tasks_for_project(uid, project_id)
     db.attach_project_labels(uid, tasks)
     rows: list[dict] = []
     for t in tasks:
-        if t["id"] not in ordered_ids:
-            continue
         emoji = _task_row_emoji(t)
         tp = ""
         if t.get("due_time"):
