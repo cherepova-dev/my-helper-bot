@@ -196,6 +196,14 @@
         startEdit(line);
         return;
       }
+      if (action === "today") {
+        fd.append("preset", "today");
+        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
       if (action === "tomorrow") {
         fd.append("preset", "tomorrow");
         postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
@@ -206,6 +214,14 @@
       }
       if (action === "plus2") {
         fd.append("preset", "plus2");
+        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
+      if (action === "clear-due") {
+        fd.append("preset", "nodate");
         postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
           if (data.ok) window.location.reload();
           else window.alert(data.message || "Ошибка");

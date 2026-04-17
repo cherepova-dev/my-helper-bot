@@ -815,6 +815,15 @@ def _get_today_in_user_tz(user_id: int) -> tuple[str, int]:
     return now.strftime("%Y-%m-%d"), now.weekday()  # weekday: 0=Monday, 6=Sunday
 
 
+def user_local_date_offset(user_id: int, days: int) -> str:
+    """Дата YYYY-MM-DD в часовом поясе пользователя: «сегодня» + days (0 = сегодня)."""
+    from datetime import date, timedelta
+
+    today_str, _ = _get_today_in_user_tz(user_id)
+    d = date.fromisoformat(today_str) + timedelta(days=days)
+    return d.strftime("%Y-%m-%d")
+
+
 def _user_today_window_utc(user_id: int) -> tuple[str, str]:
     """Начало и конец «сегодня» пользователя в UTC (ISO), для отчётов и счётчиков."""
     today_str, _ = _get_today_in_user_tz(user_id)

@@ -1096,15 +1096,20 @@ async def action_reschedule_id(
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    from datetime import datetime, timedelta
-
     uid = get_user_row()["id"]
     preset = (preset or "").strip()
     due = (due_date or "").strip()
-    if preset == "tomorrow":
-        due = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    if preset == "nodate":
+        result = move_task_tasks_page_by_id(uid, task_id, "nodate", None)
+        if _wants_json(request):
+            return JSONResponse(result)
+        return _flash_redirect(request, next, result["message"], result["ok"])
+    if preset == "today":
+        due = db.user_local_date_offset(uid, 0)
+    elif preset == "tomorrow":
+        due = db.user_local_date_offset(uid, 1)
     elif preset == "plus2":
-        due = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+        due = db.user_local_date_offset(uid, 2)
     if not due:
         err = {"ok": False, "message": "Укажи дату."}
         if _wants_json(request):
