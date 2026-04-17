@@ -42,25 +42,20 @@
     {% else %}
     <button type="button" class="task-menu-item" data-action="make-routine">Сделать рутиной</button>
     {% endif %}
-    <div class="task-menu-section task-menu-section--move" role="group" aria-label="Перенос срока">
-      <div class="task-menu-move-head">
-        <span class="task-menu-move-title">Перенос срока</span>
-        <span class="task-menu-move-hint">Когда показать в списке — дата или без срока.</span>
-      </div>
-      <div class="task-menu-preset-stack" aria-label="Быстрые даты">
-        <button type="button" class="task-menu-pill" data-action="today">На сегодня</button>
-        <button type="button" class="task-menu-pill" data-action="tomorrow">На завтра</button>
-        <button type="button" class="task-menu-pill" data-action="plus2">На послезавтра</button>
-      </div>
-      <div class="task-menu-custom-date">
-        <label class="task-menu-custom-label" for="task-date-{{ row.task_id }}">Своя дата</label>
-        <div class="task-menu-custom-date-row">
-          <input type="date" id="task-date-{{ row.task_id }}" class="task-date-input" draggable="false" aria-label="Дата переноса">
-          <button type="button" class="task-menu-ok" data-action="apply-date">Перенести</button>
+    <div class="task-menu-row-move" role="group" aria-label="Перенос срока">
+      <span class="task-menu-label">Перенос срока</span>
+      <button type="button" class="task-menu-item" data-action="today">Сегодня</button>
+      <button type="button" class="task-menu-item" data-action="tomorrow">Завтра</button>
+      <button type="button" class="task-menu-item" data-action="plus2">Послезавтра</button>
+      <div class="task-menu-date-block">
+        <label class="task-menu-label" for="task-date-{{ row.task_id }}">Своя дата</label>
+        <div class="task-menu-date-row">
+          <input type="date" id="task-date-{{ row.task_id }}" class="task-date-input" draggable="false" aria-label="Дата">
+          <button type="button" class="task-menu-ok" data-action="apply-date">OK</button>
         </div>
       </div>
       {% if not row.is_routine %}
-      <button type="button" class="task-menu-item task-menu-item--subtle" data-action="clear-due">Без срока</button>
+      <button type="button" class="task-menu-item" data-action="clear-due">Без срока</button>
       {% endif %}
     </div>
     {% if row.kebab_remove_from_plan %}
