@@ -583,6 +583,19 @@ h2.bucket {
   background: var(--bg);
   border-top: 1px solid var(--border);
   box-shadow: 0 -6px 28px rgba(0, 0, 0, 0.35);
+  display: flex;
+  justify-content: center;
+}
+/* Не наследовать отрицательные отступы карточки у того же блока (.task-form-actions--sticky) */
+.card--flush .task-form-actions--viewport-bottom {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.task-form-actions--viewport-bottom > .btn-primary.btn-block {
+  width: min(100%, 40rem);
+  max-width: 40rem;
 }
 @media (min-width: 769px) {
   .task-form-actions--viewport-bottom {
@@ -590,6 +603,10 @@ h2.bucket {
     margin-left: 0;
     margin-right: 0;
     max-width: none;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+  .card--flush .task-form-actions--viewport-bottom {
     padding-left: 1.25rem;
     padding-right: 1.25rem;
   }
@@ -701,6 +718,10 @@ pre.task-dump, pre.report {
   cursor: pointer;
   align-self: flex-start;
   z-index: 2;
+}
+/* Явно скрывать: иначе display: inline-flex перебивает поведение атрибута hidden в части браузеров */
+.task-text-save[hidden] {
+  display: none !important;
 }
 .task-text-save:hover {
   background: rgba(0, 186, 124, 0.28);
