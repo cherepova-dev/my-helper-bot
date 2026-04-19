@@ -33,6 +33,7 @@
               <div class="task-line-toprow">
                 <span class="task-text-display">{{ row.text }}</span>
                 <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
+                <button type="button" class="task-text-save" hidden aria-label="Сохранить текст">✓</button>
                 {% if row.time_part %}
                 <span class="task-meta-right muted">{{ row.time_part }}</span>
                 {% endif %}
@@ -49,7 +50,7 @@
     </ul>
   </section>
   {% endfor %}
-  <div class="task-form-actions">
+  <div class="task-form-actions task-form-actions--sticky">
     <button type="submit" form="form-complete-today" class="btn-primary btn-block">Отметить выбранное выполненным</button>
   </div>
 </div>

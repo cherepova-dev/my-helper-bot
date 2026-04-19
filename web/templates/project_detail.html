@@ -6,6 +6,9 @@
   <a href="/projects" class="muted">← Все проекты</a>
 </nav>
 <h1 class="page-heading"><span class="project-heading-emoji">{{ project.emoji or "📁" }}</span> {{ project.title }}</h1>
+{% if project_stats is defined %}
+<p class="project-stats-line muted">Активных шагов: <strong>{{ project_stats.active }}</strong> · Выполнено за неделю ({{ project_stats.week_range }}): <strong>{{ project_stats.done_week }}</strong> · Всего завершено: <strong>{{ project_stats.done_all }}</strong></p>
+{% endif %}
 <p class="muted">Новый шаг по умолчанию без срока и с категорией «Большие проекты»; в «Сегодня» шаг попадёт только после назначения даты. Отметка выполнения — галочками, как на странице «Сегодня».</p>
 
 <section class="card">
@@ -37,6 +40,7 @@
               <div class="task-line-toprow">
                 <span class="task-text-display">{{ row.text }}</span>
                 <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
+                <button type="button" class="task-text-save" hidden aria-label="Сохранить текст">✓</button>
                 {% if row.date_right %}
                 <span class="task-meta-right muted">{{ row.date_right }}</span>
                 {% endif %}
@@ -48,7 +52,7 @@
       </li>
       {% endfor %}
     </ul>
-    <div class="task-form-actions project-complete-actions">
+    <div class="task-form-actions project-complete-actions task-form-actions--sticky">
       <button type="submit" form="form-complete-project" class="btn-primary btn-block">Отметить выбранное выполненным</button>
     </div>
   </section>

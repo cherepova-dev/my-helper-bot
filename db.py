@@ -60,7 +60,34 @@ def _get_conn():
             _conn.execute("PRAGMA journal_mode=WAL")
             _conn.execute("PRAGMA foreign_keys=ON")
             _init_tables_sqlite()
+        _ensure_routine_completions_table_sqlite()
     return _conn
+
+
+def _ensure_routine_completions_table_sqlite() -> None:
+    """Миграция: таблица журнала рутин для уже существующих SQLite-файлов."""
+    if USE_PG or _conn is None:
+        return
+    try:
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS routine_completions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id         INTEGER NOT NULL REFERENCES users(id),
+                task_id         INTEGER NOT NULL REFERENCES tasks(id),
+                completed_at    TEXT NOT NULL
+            )
+            """
+        )
+        _conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rc_user_time ON routine_completions(user_id, completed_at)"
+        )
+        _conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rc_user_task ON routine_completions(user_id, task_id)"
+        )
+        _conn.commit()
+    except Exception:
+        pass
 
 
 def _init_tables_pg() -> None:
@@ -121,6 +148,14 @@ def _init_tables_pg() -> None:
         created_at      TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+    CREATE TABLE IF NOT EXISTS routine_completions (
+        id              SERIAL PRIMARY KEY,
+        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        task_id         INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        completed_at    TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rc_user_time ON routine_completions(user_id, completed_at);
+    CREATE INDEX IF NOT EXISTS idx_rc_user_task ON routine_completions(user_id, task_id);
     """)
     for col_sql in (
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
@@ -191,6 +226,14 @@ def _init_tables_sqlite() -> None:
         created_at      TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+    CREATE TABLE IF NOT EXISTS routine_completions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         INTEGER NOT NULL REFERENCES users(id),
+        task_id         INTEGER NOT NULL REFERENCES tasks(id),
+        completed_at    TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rc_user_time ON routine_completions(user_id, completed_at);
+    CREATE INDEX IF NOT EXISTS idx_rc_user_task ON routine_completions(user_id, task_id);
     """)
     _conn.commit()
     for col_sql in (
@@ -824,6 +867,35 @@ def user_local_date_offset(user_id: int, days: int) -> str:
     return d.strftime("%Y-%m-%d")
 
 
+def _local_date_start_utc(user_id: int, date_str: str) -> str:
+    """Полночь даты YYYY-MM-DD в TZ пользователя → UTC ISO."""
+    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
+    tz_name = (row.get("timezone") or "Europe/Moscow").strip() if row else "Europe/Moscow"
+    y, m, d = map(int, date_str.split("-"))
+    if ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(tz_name)
+            start = datetime(y, m, d, 0, 0, 0, tzinfo=tz)
+            return start.astimezone(timezone.utc).isoformat()
+        except Exception:
+            pass
+    return date_str + "T00:00:00+00:00"
+
+
+def user_calendar_week_bounds_utc(user_id: int) -> tuple[str, str, str, str]:
+    """Текущая календарная неделя (пн–вс): start_UTC, end_exclusive_UTC, monday_str, sunday_str."""
+    from datetime import date, timedelta
+
+    today_str, wd = _get_today_in_user_tz(user_id)
+    today_d = date.fromisoformat(today_str)
+    monday = today_d - timedelta(days=int(wd))
+    sunday = monday + timedelta(days=6)
+    next_monday = monday + timedelta(days=7)
+    start_utc = _local_date_start_utc(user_id, monday.strftime("%Y-%m-%d"))
+    end_utc = _local_date_start_utc(user_id, next_monday.strftime("%Y-%m-%d"))
+    return start_utc, end_utc, monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d")
+
+
 def _user_today_window_utc(user_id: int) -> tuple[str, str]:
     """Начало и конец «сегодня» пользователя в UTC (ISO), для отчётов и счётчиков."""
     today_str, _ = _get_today_in_user_tz(user_id)
@@ -919,6 +991,15 @@ def format_repeat_day_display(repeat_day: str | None) -> str:
     """Краткая подпись расписания: один день — как раньше; несколько — «пн · ср · пт (нед.)»."""
     if not repeat_day or not (repeat_day := repeat_day.strip()):
         return "—"
+    if repeat_day.upper().startswith("N_DAYS:"):
+        try:
+            n = int(repeat_day.split(":", 1)[1].strip())
+            return f"Каждые {n} дн."
+        except (ValueError, IndexError):
+            return repeat_day
+    if repeat_day.upper().startswith("BIWEEK:"):
+        code = repeat_day.split(":", 1)[1].strip().lower() if ":" in repeat_day else ""
+        return f"Раз в 2 недели ({code or '?'})"
     if repeat_day.lower() == "ежедневно":
         return "Ежедневно"
     parts = [d.strip().lower() for d in repeat_day.split(",") if d.strip()]
@@ -930,13 +1011,57 @@ def format_repeat_day_display(repeat_day: str | None) -> str:
     return f"{short} (нед.)"
 
 
-def _routine_matches_today(task: dict, today_weekday: int) -> bool:
+def _routine_matches_today(task: dict, today_weekday: int, today_str: str) -> bool:
     """Проверяет, должна ли рутина показываться сегодня (по repeat_day)."""
+    from datetime import date, timedelta
+
     repeat = (task.get("repeat_day") or "").strip()
     if not repeat:
         return True
-    if repeat.lower() == "ежедневно":
+    low = repeat.lower()
+    if low == "ежедневно":
         return True
+    if repeat.upper().startswith("N_DAYS:"):
+        try:
+            n = int(repeat.split(":", 1)[1].strip())
+        except (ValueError, IndexError):
+            return False
+        if n < 2:
+            return False
+        try:
+            today_d = date.fromisoformat(today_str)
+        except ValueError:
+            return False
+        created = task.get("created_at")
+        try:
+            cstr = str(created)[:10]
+            anchor_d = date.fromisoformat(cstr)
+        except Exception:
+            return True
+        delta = (today_d - anchor_d).days
+        return delta >= 0 and delta % n == 0
+    if repeat.upper().startswith("BIWEEK:"):
+        code = repeat.split(":", 1)[1].strip().lower() if ":" in repeat else ""
+        wd_need = _ROUTINE_DAY_MAP.get(code)
+        if wd_need is None or wd_need < 0:
+            return False
+        if today_weekday != wd_need:
+            return False
+        try:
+            today_d = date.fromisoformat(today_str)
+        except ValueError:
+            return False
+        try:
+            cstr = str(task.get("created_at") or "")[:10]
+            anchor_d = date.fromisoformat(cstr)
+        except Exception:
+            anchor_d = today_d
+
+        def _week_index(d: date) -> int:
+            mon = d - timedelta(days=d.weekday())
+            return mon.toordinal() // 7
+
+        return (_week_index(today_d) - _week_index(anchor_d)) % 2 == 0
     days = [d.strip().lower() for d in repeat.split(",")]
     for d in days:
         wd = _ROUTINE_DAY_MAP.get(d)
@@ -975,7 +1100,7 @@ def get_today_tasks(user_id: int) -> list[dict]:
     result = []
     for t in rows:
         if t.get("is_routine"):
-            if not _routine_matches_today(t, today_weekday):
+            if not _routine_matches_today(t, today_weekday, today_str):
                 continue
             lc = t.get("last_completed_at") or ""
             if lc:
@@ -1026,6 +1151,11 @@ def complete_task(task_id: int, user_id: int | None = None, task: dict | None = 
                 (now, task_id),
             )
     logger.info("complete_task: task_id=%s user_id=%s is_routine=%s rows_updated=%s", task_id, user_id, is_routine, n)
+    if n > 0 and is_routine and user_id is not None:
+        try:
+            log_routine_completion(user_id, task_id, now)
+        except Exception as e:
+            logger.warning("log_routine_completion failed: %s", e)
     return n > 0
 
 
@@ -1042,6 +1172,11 @@ def uncomplete_task(task_id: int, user_id: int) -> bool:
             "WHERE id = %s AND user_id = %s AND status = 'active' AND is_routine = TRUE AND last_completed_at IS NOT NULL",
             (task_id, user_id),
         )
+        if n > 0:
+            try:
+                delete_last_routine_completion(user_id, task_id)
+            except Exception as e:
+                logger.warning("delete_last_routine_completion failed: %s", e)
     logger.info("uncomplete_task: task_id=%s user_id=%s rows_updated=%s", task_id, user_id, n)
     return n > 0
 
@@ -1092,6 +1227,82 @@ def get_done_tasks(user_id: int, days: int = 7) -> list[dict]:
     merged = list(done) + list(routines_done)
     merged.sort(key=lambda x: (x.get("_use_completed_at") or ""), reverse=True)
     return merged
+
+
+def get_done_tasks_between(user_id: int, start_utc: str, end_utc_exclusive: str) -> list[dict]:
+    """Выполненные в [start_UTC, end_UTC): done + рутины по last_completed_at."""
+    done = _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'done' "
+        "AND completed_at >= %s AND completed_at < %s ORDER BY completed_at DESC",
+        (user_id, start_utc, end_utc_exclusive),
+    )
+    routines_done = _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' AND is_routine = TRUE "
+        "AND last_completed_at >= %s AND last_completed_at < %s ORDER BY last_completed_at DESC",
+        (user_id, start_utc, end_utc_exclusive),
+    )
+    for t in routines_done:
+        t["_use_completed_at"] = t.get("last_completed_at")
+    for t in done:
+        t["_use_completed_at"] = t.get("completed_at")
+    merged = list(done) + list(routines_done)
+    merged.sort(key=lambda x: (x.get("_use_completed_at") or ""), reverse=True)
+    return merged
+
+
+def get_done_tasks_calendar_week(user_id: int) -> tuple[list[dict], str, str, str, str]:
+    """Календарная неделя (пн–вс): задачи, дата пн, дата вс, start_utc, end_utc."""
+    start_utc, end_utc, mon, sun = user_calendar_week_bounds_utc(user_id)
+    tasks = get_done_tasks_between(user_id, start_utc, end_utc)
+    return tasks, mon, sun, start_utc, end_utc
+
+
+def routine_completion_counts_between(
+    user_id: int, start_utc: str, end_utc_exclusive: str
+) -> list[dict]:
+    """Число отметок по журналу routine_completions за период."""
+    return _fetchall(
+        "SELECT rc.task_id, t.text AS text, COUNT(*) AS c FROM routine_completions rc "
+        "INNER JOIN tasks t ON t.id = rc.task_id AND t.user_id = rc.user_id "
+        "WHERE rc.user_id = %s AND rc.completed_at >= %s AND rc.completed_at < %s "
+        "GROUP BY rc.task_id, t.text ORDER BY c DESC, t.text",
+        (user_id, start_utc, end_utc_exclusive),
+    )
+
+
+def count_done_tasks_in_project_between(
+    user_id: int, project_id: int, start_utc: str, end_utc_exclusive: str
+) -> int:
+    row = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'done' "
+        "AND completed_at >= %s AND completed_at < %s",
+        (user_id, project_id, start_utc, end_utc_exclusive),
+    )
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
+def count_done_tasks_in_project_all(user_id: int, project_id: int) -> int:
+    row = _fetchone(
+        "SELECT COUNT(*) AS c FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'done'",
+        (user_id, project_id),
+    )
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
+def log_routine_completion(user_id: int, task_id: int, at_iso: str) -> None:
+    _execute(
+        "INSERT INTO routine_completions (user_id, task_id, completed_at) VALUES (%s, %s, %s)",
+        (user_id, task_id, at_iso),
+    )
+
+
+def delete_last_routine_completion(user_id: int, task_id: int) -> None:
+    row = _fetchone(
+        "SELECT id FROM routine_completions WHERE user_id = %s AND task_id = %s ORDER BY completed_at DESC LIMIT 1",
+        (user_id, task_id),
+    )
+    if row and row.get("id") is not None:
+        _execute("DELETE FROM routine_completions WHERE id = %s", (row["id"],))
 
 
 def count_done_tasks_today(user_id: int) -> int:

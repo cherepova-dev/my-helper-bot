@@ -55,3 +55,10 @@ def test_projects_page_after_login(client):
     assert r.status_code == 200
     assert "Проекты" in r.text
     assert "Новый проект" in r.text
+
+
+def test_reports_projects_after_login(client):
+    client.post("/login", data={"password": "test-secret"})
+    r = client.get("/reports/projects")
+    assert r.status_code == 200
+    assert "проект" in r.text.lower()

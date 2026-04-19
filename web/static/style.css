@@ -544,6 +544,23 @@ h2.bucket {
 .task-list .txt { flex: 1; }
 
 .task-form-actions { margin-top: 0.75rem; }
+.task-form-actions--sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  margin-top: 1rem;
+  margin-left: -0.35rem;
+  margin-right: -0.35rem;
+  padding: 0.75rem 0.5rem calc(0.75rem + env(safe-area-inset-bottom, 0));
+  background: linear-gradient(180deg, transparent, var(--bg, #0d1117) 28%);
+  border-top: 1px solid var(--border);
+}
+.card--flush .task-form-actions--sticky {
+  margin-left: -1.1rem;
+  margin-right: -1.1rem;
+  padding-left: 1.1rem;
+  padding-right: 1.1rem;
+}
 
 .flash {
   padding: 0.55rem 0.85rem;
@@ -629,6 +646,30 @@ pre.task-dump, pre.report {
   flex: 1 1 12rem;
   min-width: 0;
   word-break: break-word;
+}
+.task-line-toprow .task-text-input {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+.task-text-save {
+  flex-shrink: 0;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 186, 124, 0.45);
+  background: rgba(0, 186, 124, 0.15);
+  color: #5ee4b4;
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.task-text-save:hover {
+  background: rgba(0, 186, 124, 0.28);
+}
+.routine-line-title .task-text-save {
+  align-self: center;
 }
 .task-meta-right {
   flex: 0 1 auto;
@@ -980,10 +1021,57 @@ pre.task-dump, pre.report {
 .task-menu-item--danger:hover,
 .task-menu-danger:hover { background: rgba(244, 33, 46, 0.12); color: #ff9a9a; }
 /* Блок «Перенос срока»: как у «Категория» — полоска и task-menu-label */
+.task-menu-row-time {
+  padding: 0.35rem 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.task-menu-row-time > .task-menu-label {
+  margin-bottom: 0.35rem;
+}
 .task-menu-row-move {
   padding: 0.35rem 0.75rem 0.5rem;
   border-bottom: 1px solid var(--border);
 }
+.routine-interval-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0.75rem 0.5rem;
+  max-width: calc(100% - 1.5rem);
+  padding: 0.35rem 0.45rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #000;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.85rem;
+}
+.project-report-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.project-report-item {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.project-report-item:last-child { border-bottom: none; }
+.project-report-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  color: var(--fg);
+  font-weight: 600;
+}
+.project-report-link:hover { color: var(--accent); }
+.project-report-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+}
+.project-stats-line { margin-bottom: 0.5rem; }
 .task-menu-row-move > .task-menu-label:first-child {
   margin-bottom: 0.35rem;
 }
@@ -1104,7 +1192,7 @@ pre.task-dump, pre.report {
 .task-project { font-size: 0.88rem; }
 
 /* legacy primary buttons */
-button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-ok) {
+button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-ok):not(.task-text-save) {
   padding: 0.5rem 0.9rem;
   border-radius: 8px;
   border: none;

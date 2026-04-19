@@ -33,6 +33,8 @@
         </label>
         {% endfor %}
       </div>
+      <label class="task-menu-label" for="rint-{{ row.task_id }}">Каждые N дней</label>
+      <input type="number" id="rint-{{ row.task_id }}" class="routine-interval-input" min="2" max="365" step="1" placeholder="Пусто — по дням недели" value="{{ row.repeat_interval or '' }}" aria-label="Интервал в днях" draggable="false">
       <button type="button" class="task-menu-item routine-repeat-save" data-action="save-repeat-days">Сохранить расписание</button>
     </div>
     {% endif %}
@@ -42,6 +44,14 @@
     {% else %}
     <button type="button" class="task-menu-item" data-action="make-routine">Сделать рутиной</button>
     {% endif %}
+    <div class="task-menu-row-time">
+      <span class="task-menu-label">Время суток</span>
+      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="утро">Утро</button>
+      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="день">День</button>
+      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="вечер">Вечер</button>
+      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="ночь">Ночь</button>
+      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="none">Снять блок</button>
+    </div>
     <div class="task-menu-row-move" role="group" aria-label="Перенос срока">
       <span class="task-menu-label">Перенос срока</span>
       <button type="button" class="task-menu-item" data-action="today">Сегодня</button>

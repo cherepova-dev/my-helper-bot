@@ -255,9 +255,10 @@ class TestFormatDoneReportWeek:
     """Отчёт за неделю с группировкой по дням."""
 
     def test_empty_friendly(self):
-        result = _format_done_report_week([], "Europe/Moscow")
+        result = _format_done_report_week([], "Europe/Moscow", week_mon="2026-03-23", week_sun="2026-03-29")
         assert "Сделано за неделю" in result
-        assert "7 дней" in result or "ни одной" in result
+        assert "календар" in result.lower() or "недел" in result.lower()
+        assert "ни одной" in result.lower() or "не отмечено" in result.lower()
 
 
 class TestTaskTimeBucket:

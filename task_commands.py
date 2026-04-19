@@ -572,6 +572,20 @@ def _normalize_web_repeat_day(raw: str) -> str | None:
     s = (raw or "").strip()
     if not s:
         return None
+    up = s.upper()
+    if up.startswith("N_DAYS:"):
+        try:
+            n = int(s.split(":", 1)[1].strip())
+        except (ValueError, IndexError):
+            return None
+        if 2 <= n <= 365:
+            return f"N_DAYS:{n}"
+        return None
+    if up.startswith("BIWEEK:"):
+        code = s.split(":", 1)[1].strip().lower() if ":" in s else ""
+        if code in _REPEAT_WEB_ALLOWED and code != "ежедневно":
+            return f"BIWEEK:{code}"
+        return None
     if s == ROUTINE_WEEKLY_NO_DAY or s.lower() == "раз в неделю":
         return random.choice(tuple(WEEKDAY_CODES))
     low = s.lower()

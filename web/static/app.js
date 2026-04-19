@@ -179,8 +179,15 @@
 
     function closeKebab(line) {
       var det = line.querySelector(".task-kebab");
-      if (det) det.open = false;
+      if (det) det.removeAttribute("open");
     }
+
+    document.addEventListener("click", function (e) {
+      if (e.target.closest(".task-kebab")) return;
+      document.querySelectorAll(".task-kebab[open]").forEach(function (el) {
+        el.removeAttribute("open");
+      });
+    });
 
     document.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-action]");
@@ -242,6 +249,18 @@
         });
         return;
       }
+      if (action === "time-bucket") {
+        var bk = (btn.getAttribute("data-bucket") || "none").trim();
+        fd.append("mode", "today_bucket");
+        fd.append("bucket", bk);
+        fd.append("section_kind", "");
+        fd.append("section_date", "");
+        postTaskAction("/tasks/drag_move", fd).then(function (data) {
+          if (data.ok) window.location.reload();
+          else window.alert(data.message || "Ошибка");
+        });
+        return;
+      }
       if (action === "routine-snooze-today") {
         postTaskAction("/tasks/routine_snooze_today", fd).then(function (data) {
           if (data.ok) window.location.reload();
@@ -285,13 +304,28 @@
       if (action === "save-repeat-days") {
         var box = btn.closest(".routine-repeat-box");
         if (!box) return;
+        var intervalInp = box.querySelector(".routine-interval-input");
+        var rawIv = intervalInp && intervalInp.value.trim();
+        if (rawIv) {
+          var n = parseInt(rawIv, 10);
+          if (n >= 2 && n <= 365) {
+            fd.append("repeat_day", "N_DAYS:" + n);
+            postTaskAction("/tasks/set_repeat_day", fd).then(function (data) {
+              if (data.ok) window.location.reload();
+              else window.alert(data.message || "Ошибка");
+            });
+            return;
+          }
+          window.alert("Интервал: число от 2 до 365 или оставь пустым.");
+          return;
+        }
         var daily = box.querySelector(".routine-daily-cb");
         var weekdays = box.querySelectorAll(".routine-weekday-cb:checked");
         if (daily && daily.checked) {
           fd.append("repeat_day", "ежедневно");
         } else {
           if (!weekdays.length) {
-            window.alert("Отметь «Ежедневно» или хотя бы один день недели.");
+            window.alert("Отметь «Ежедневно», интервал в днях или хотя бы один день недели.");
             return;
           }
           fd.append(
@@ -362,10 +396,12 @@
     function startEdit(line) {
       var display = line.querySelector(".task-text-display");
       var input = line.querySelector(".task-text-input");
+      var saveBtn = line.querySelector(".task-text-save");
       if (!display || !input) return;
       input.value = display.textContent.trim();
       display.hidden = true;
       input.hidden = false;
+      if (saveBtn) saveBtn.hidden = false;
       input.focus();
       input.select();
     }
@@ -373,9 +409,11 @@
     function cancelEdit(line) {
       var display = line.querySelector(".task-text-display");
       var input = line.querySelector(".task-text-input");
+      var saveBtn = line.querySelector(".task-text-save");
       if (!display || !input) return;
       input.hidden = true;
       display.hidden = false;
+      if (saveBtn) saveBtn.hidden = true;
     }
 
     function saveEdit(line) {
@@ -397,7 +435,31 @@
     document.querySelectorAll(".task-line").forEach(function (line) {
       var display = line.querySelector(".task-text-display");
       var input = line.querySelector(".task-text-input");
+      var saveBtn = line.querySelector(".task-text-save");
       if (!display || !input) return;
+
+      if (saveBtn) {
+        saveBtn.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+        });
+        saveBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (input.hidden) return;
+          var before = display.textContent.trim();
+          var after = input.value.trim();
+          if (!after) {
+            window.alert("Текст не может быть пустым");
+            input.focus();
+            return;
+          }
+          if (after === before) {
+            cancelEdit(line);
+            return;
+          }
+          saveEdit(line);
+        });
+      }
 
       display.addEventListener("dblclick", function (e) {
         e.preventDefault();
@@ -409,6 +471,10 @@
           e.preventDefault();
           input.value = display.textContent;
           cancelEdit(line);
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          if (saveBtn && !saveBtn.hidden) saveBtn.click();
         }
       });
 

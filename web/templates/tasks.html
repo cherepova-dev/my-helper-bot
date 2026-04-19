@@ -24,6 +24,7 @@
               <div class="task-line-toprow">
                 <span class="task-text-display">{{ row.text }}</span>
                 <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст задачи" draggable="false">
+                <button type="button" class="task-text-save" hidden aria-label="Сохранить текст">✓</button>
                 {% if row.date_right %}
                 <span class="task-meta-right muted">{{ row.date_right }}</span>
                 {% endif %}

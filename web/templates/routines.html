@@ -21,6 +21,7 @@
             <div class="routine-line-title">
               <span class="task-text-display">{{ row.text }}</span>
               <input type="text" class="task-text-input" value="{{ row.text }}" hidden autocomplete="off" spellcheck="true" aria-label="Текст рутины" draggable="false">
+              <button type="button" class="task-text-save" hidden aria-label="Сохранить текст">✓</button>
             </div>
             <div class="routine-line-repeat muted">— {{ row.repeat_label }}</div>
           </div>

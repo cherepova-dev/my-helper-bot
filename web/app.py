@@ -266,6 +266,7 @@ _FLASH_PATHS = frozenset(
         "/help",
         "/reports/today",
         "/reports/week",
+        "/reports/projects",
         "/projects",
         "/settings",
     }
@@ -301,10 +302,25 @@ def _task_row_emoji(t: dict) -> str:
 
 
 def _repeat_day_codes(rd: str | None) -> list[str]:
-    s = (rd or "").strip().lower()
-    if not s or s == "ежедневно":
+    s = (rd or "").strip()
+    if not s:
         return []
-    return [p.strip() for p in s.split(",") if p.strip()]
+    if s.lower() == "ежедневно":
+        return []
+    up = s.upper()
+    if up.startswith("N_DAYS:") or up.startswith("BIWEEK:"):
+        return []
+    return [p.strip() for p in s.lower().split(",") if p.strip()]
+
+
+def _repeat_interval_for_row(rd: str | None) -> str:
+    s = (rd or "").strip().upper()
+    if s.startswith("N_DAYS:"):
+        try:
+            return str(int(s.split(":", 1)[1].strip()))
+        except (ValueError, IndexError):
+            return ""
+    return ""
 
 
 def _category_edit_rows(uid: int) -> list[dict]:
@@ -474,6 +490,7 @@ async def page_today(request: Request):
                         "category_name": (t.get("category_name") or "").strip(),
                         "repeat_day": rd,
                         "repeat_day_codes": _repeat_day_codes(rd),
+                        "repeat_interval": _repeat_interval_for_row(rd),
                         "project_label": pl,
                         "kebab_remove_from_plan": bool(t.get("is_routine")),
                     }
@@ -537,6 +554,7 @@ async def page_tasks(request: Request):
             "category_name": (t.get("category_name") or "").strip(),
             "repeat_day": rd,
             "repeat_day_codes": _repeat_day_codes(rd),
+            "repeat_interval": _repeat_interval_for_row(rd),
             "project_label": pl,
             "has_project": bool(pl),
         }
@@ -699,6 +717,7 @@ async def page_project_detail(request: Request, project_id: int):
                 "category_name": (t.get("category_name") or "").strip(),
                 "repeat_day": "",
                 "repeat_day_codes": [],
+                "repeat_interval": "",
                 "has_project": False,
                 "project_label": "",
             }
@@ -719,6 +738,9 @@ async def page_project_detail(request: Request, project_id: int):
             {"text": (t.get("text") or "").strip(), "done_label": done_label}
         )
     next_url = f"/projects/{project_id}"
+    w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
+    n_done_week = db.count_done_tasks_in_project_between(uid, project_id, w_start_utc, w_end_utc)
+    n_done_all = db.count_done_tasks_in_project_all(uid, project_id)
     return templates.TemplateResponse(
         request,
         "project_detail.html",
@@ -730,6 +752,12 @@ async def page_project_detail(request: Request, project_id: int):
             done_rows=done_rows,
             next_url=next_url,
             category_choices=_category_choices(uid),
+            project_stats={
+                "active": len(rows),
+                "done_week": n_done_week,
+                "done_all": n_done_all,
+                "week_range": f"{_format_date_human(w_mon)} — {_format_date_human(w_sun)}",
+            },
         ),
     )
 
@@ -785,6 +813,7 @@ async def page_routines(request: Request):
                     "category_name": (t.get("category_name") or "").strip(),
                     "repeat_day": rd,
                     "repeat_day_codes": _repeat_day_codes(rd),
+                    "repeat_interval": _repeat_interval_for_row(rd),
                 }
             )
         sections.append(
@@ -862,14 +891,57 @@ async def page_report_week(request: Request):
     user_row = get_user_row()
     uid = user_row["id"]
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-    tasks = db.get_done_tasks(uid, days=7)
+    tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
     db.attach_project_labels(uid, tasks)
-    text = _format_done_report_week(tasks, tz_name)
+    habits = db.routine_completion_counts_between(uid, start_utc, end_utc)
+    habit_lines = [(str(r.get("text") or ""), int(r["c"])) for r in habits if r.get("c")]
+    text = _format_done_report_week(
+        tasks,
+        tz_name,
+        week_mon=mon,
+        week_sun=sun,
+        habit_counts=habit_lines,
+    )
     body_html = report_text_to_html(text)
     return templates.TemplateResponse(
         request,
         "report.html",
         _ctx(title="Сделано за неделю", body_html=body_html),
+    )
+
+
+@app.get("/reports/projects", response_class=HTMLResponse)
+async def page_reports_projects(request: Request):
+    if not request.session.get("auth"):
+        return RedirectResponse("/login", status_code=302)
+    from bot_v2 import _format_date_human
+
+    uid = get_user_row()["id"]
+    raw = db.list_projects(uid)
+    counts = db.count_active_tasks_by_project(uid)
+    w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
+    week_lbl = f"{_format_date_human(w_mon)} — {_format_date_human(w_sun)}"
+    report_rows: list[dict] = []
+    for p in raw:
+        pid = int(p["id"])
+        report_rows.append(
+            {
+                "id": pid,
+                "title": (p.get("title") or "").strip(),
+                "emoji": ((p.get("emoji") or "📁").strip() or "📁"),
+                "n_active": counts.get(pid, 0),
+                "n_done_week": db.count_done_tasks_in_project_between(uid, pid, w_start_utc, w_end_utc),
+                "n_done_all": db.count_done_tasks_in_project_all(uid, pid),
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "reports_projects.html",
+        _ctx(
+            report_rows=report_rows,
+            empty=len(report_rows) == 0,
+            week_label=week_lbl,
+        ),
     )
 
 

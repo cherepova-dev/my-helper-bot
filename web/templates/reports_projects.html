@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Отчёт по проектам{% endblock %}
+{% block top_title %}Проекты: сводка{% endblock %}
+{% block content %}
+<h1 class="page-heading">Отчёт по проектам</h1>
+<p class="muted">Текущая календарная неделя: <strong>{{ week_label }}</strong>. Считаются обычные задачи со статусом «выполнено» (шаги проекта).</p>
+
+{% if empty %}
+<p class="muted">Пока нет проектов.</p>
+{% else %}
+<section class="card">
+  <ul class="project-report-list">
+    {% for p in report_rows %}
+    <li class="project-report-item">
+      <a href="/projects/{{ p.id }}" class="project-report-link">
+        <span class="project-report-emoji">{{ p.emoji }}</span>
+        <span class="project-report-title">{{ p.title }}</span>
+      </a>
+      <div class="project-report-stats muted">
+        <span>Активных: {{ p.n_active }}</span>
+        <span>За неделю: {{ p.n_done_week }}</span>
+        <span>Всего сделано: {{ p.n_done_all }}</span>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}
