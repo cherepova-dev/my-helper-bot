@@ -16,7 +16,7 @@
       </select>
     </div>
     {% endif %}
-    {% if row.is_routine %}
+    {% if row.is_routine and not (kebab_hide_schedule | default(false)) %}
     {% set rd = row.repeat_day or '' %}
     {% set rdc = row.repeat_day_codes if row.repeat_day_codes is defined else [] %}
     <div class="routine-repeat-box" data-task-id="{{ row.task_id }}">
@@ -45,12 +45,14 @@
     <button type="button" class="task-menu-item" data-action="make-routine">Сделать рутиной</button>
     {% endif %}
     <div class="task-menu-row-time">
-      <span class="task-menu-label">Время суток</span>
-      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="утро">Утро</button>
-      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="день">День</button>
-      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="вечер">Вечер</button>
-      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="ночь">Ночь</button>
-      <button type="button" class="task-menu-item" data-action="time-bucket" data-bucket="none">Снять блок</button>
+      <span class="task-menu-label task-menu-label--time">Время суток</span>
+      <div class="task-time-chips" role="group" aria-label="Блок дня">
+        <button type="button" class="task-menu-chip" data-action="time-bucket" data-bucket="утро">Утро</button>
+        <button type="button" class="task-menu-chip" data-action="time-bucket" data-bucket="день">День</button>
+        <button type="button" class="task-menu-chip" data-action="time-bucket" data-bucket="вечер">Вечер</button>
+        <button type="button" class="task-menu-chip" data-action="time-bucket" data-bucket="ночь">Ночь</button>
+        <button type="button" class="task-menu-chip task-menu-chip--muted" data-action="time-bucket" data-bucket="none">Снять</button>
+      </div>
     </div>
     <div class="task-menu-row-move" role="group" aria-label="Перенос срока">
       <span class="task-menu-label">Перенос срока</span>

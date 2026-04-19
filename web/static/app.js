@@ -165,8 +165,25 @@
       headers: { Accept: "application/json" },
       credentials: "same-origin",
     }).then(function (r) {
+      var ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (!ct.includes("application/json")) {
+        return r.text().then(function (t) {
+          throw new Error((t && t.slice(0, 200)) || "Ответ не JSON");
+        });
+      }
       return r.json();
     });
+  }
+
+  function taskActionReload(httpPromise) {
+    return httpPromise
+      .then(function (data) {
+        if (data.ok) window.location.reload();
+        else window.alert(data.message || "Ошибка");
+      })
+      .catch(function (err) {
+        window.alert(err.message || "Ошибка сети");
+      });
   }
 
   function initTaskRows() {
@@ -182,12 +199,17 @@
       if (det) det.removeAttribute("open");
     }
 
-    document.addEventListener("click", function (e) {
-      if (e.target.closest(".task-kebab")) return;
-      document.querySelectorAll(".task-kebab[open]").forEach(function (el) {
-        el.removeAttribute("open");
-      });
-    });
+    document.addEventListener(
+      "pointerdown",
+      function (e) {
+        if (e.button != null && e.button !== 0) return;
+        if (e.target.closest(".task-kebab")) return;
+        document.querySelectorAll(".task-kebab[open]").forEach(function (el) {
+          el.removeAttribute("open");
+        });
+      },
+      true
+    );
 
     document.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-action]");
@@ -205,34 +227,22 @@
       }
       if (action === "today") {
         fd.append("preset", "today");
-        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/reschedule_id", fd));
         return;
       }
       if (action === "tomorrow") {
         fd.append("preset", "tomorrow");
-        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/reschedule_id", fd));
         return;
       }
       if (action === "plus2") {
         fd.append("preset", "plus2");
-        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/reschedule_id", fd));
         return;
       }
       if (action === "clear-due") {
         fd.append("preset", "nodate");
-        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/reschedule_id", fd));
         return;
       }
       if (action === "apply-date") {
@@ -243,10 +253,7 @@
           return;
         }
         fd.append("due_date", d);
-        postTaskAction("/tasks/reschedule_id", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/reschedule_id", fd));
         return;
       }
       if (action === "time-bucket") {
@@ -255,25 +262,16 @@
         fd.append("bucket", bk);
         fd.append("section_kind", "");
         fd.append("section_date", "");
-        postTaskAction("/tasks/drag_move", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/drag_move", fd));
         return;
       }
       if (action === "routine-snooze-today") {
-        postTaskAction("/tasks/routine_snooze_today", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/routine_snooze_today", fd));
         return;
       }
       if (action === "delete") {
         if (!window.confirm("Удалить эту задачу?")) return;
-        postTaskAction("/tasks/delete_id", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/delete_id", fd));
         return;
       }
       if (action === "make-routine") {
@@ -285,20 +283,14 @@
           return;
         closeKebab(line);
         fd.append("make_routine", "1");
-        postTaskAction("/tasks/set_routine_kind", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/set_routine_kind", fd));
         return;
       }
       if (action === "make-normal") {
         if (!window.confirm("Сделать обычной задачей на сегодня?")) return;
         closeKebab(line);
         fd.append("make_routine", "0");
-        postTaskAction("/tasks/set_routine_kind", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/set_routine_kind", fd));
         return;
       }
       if (action === "save-repeat-days") {
@@ -310,10 +302,7 @@
           var n = parseInt(rawIv, 10);
           if (n >= 2 && n <= 365) {
             fd.append("repeat_day", "N_DAYS:" + n);
-            postTaskAction("/tasks/set_repeat_day", fd).then(function (data) {
-              if (data.ok) window.location.reload();
-              else window.alert(data.message || "Ошибка");
-            });
+            taskActionReload(postTaskAction("/tasks/set_repeat_day", fd));
             return;
           }
           window.alert("Интервал: число от 2 до 365 или оставь пустым.");
@@ -337,10 +326,7 @@
               .join(",")
           );
         }
-        postTaskAction("/tasks/set_repeat_day", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/set_repeat_day", fd));
         return;
       }
     });
@@ -385,10 +371,7 @@
         if (!line || !cat.value) return;
         var fd = taskFd(line);
         fd.append("category_name", cat.value);
-        postTaskAction("/tasks/set_category", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/set_category", fd));
         return;
       }
     });
@@ -399,9 +382,9 @@
       var saveBtn = line.querySelector(".task-text-save");
       if (!display || !input) return;
       input.value = display.textContent.trim();
-      display.hidden = true;
-      input.hidden = false;
-      if (saveBtn) saveBtn.hidden = false;
+      display.setAttribute("hidden", "");
+      input.removeAttribute("hidden");
+      if (saveBtn) saveBtn.removeAttribute("hidden");
       input.focus();
       input.select();
     }
@@ -411,9 +394,9 @@
       var input = line.querySelector(".task-text-input");
       var saveBtn = line.querySelector(".task-text-save");
       if (!display || !input) return;
-      input.hidden = true;
-      display.hidden = false;
-      if (saveBtn) saveBtn.hidden = true;
+      input.setAttribute("hidden", "");
+      display.removeAttribute("hidden");
+      if (saveBtn) saveBtn.setAttribute("hidden", "");
     }
 
     function saveEdit(line) {
@@ -422,14 +405,18 @@
       if (!display || !input) return;
       var fd = taskFd(line);
       fd.append("text", input.value);
-      postTaskAction("/tasks/update_text", fd).then(function (data) {
-        if (data.ok) {
-          display.textContent = input.value.trim();
-          cancelEdit(line);
-        } else {
-          window.alert(data.message || "Не сохранилось");
-        }
-      });
+      postTaskAction("/tasks/update_text", fd)
+        .then(function (data) {
+          if (data.ok) {
+            display.textContent = input.value.trim();
+            cancelEdit(line);
+          } else {
+            window.alert(data.message || "Не сохранилось");
+          }
+        })
+        .catch(function (err) {
+          window.alert(err.message || "Ошибка сети");
+        });
     }
 
     document.querySelectorAll(".task-line").forEach(function (line) {
@@ -445,7 +432,7 @@
         saveBtn.addEventListener("click", function (e) {
           e.preventDefault();
           e.stopPropagation();
-          if (input.hidden) return;
+          if (input.hasAttribute("hidden")) return;
           var before = display.textContent.trim();
           var after = input.value.trim();
           if (!after) {
@@ -474,14 +461,14 @@
         }
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
-          if (saveBtn && !saveBtn.hidden) saveBtn.click();
+          if (saveBtn && !saveBtn.hasAttribute("hidden")) saveBtn.click();
         }
       });
 
       input.addEventListener("blur", function () {
-        if (input.hidden) return;
+        if (input.hasAttribute("hidden")) return;
         setTimeout(function () {
-          if (input.hidden) return;
+          if (input.hasAttribute("hidden")) return;
           if (line.contains(document.activeElement)) return;
           var before = display.textContent.trim();
           var after = input.value.trim();
@@ -594,10 +581,7 @@
         } else {
           return;
         }
-        postTaskAction("/tasks/drag_move", fd).then(function (data) {
-          if (data.ok) window.location.reload();
-          else window.alert(data.message || "Ошибка");
-        });
+        taskActionReload(postTaskAction("/tasks/drag_move", fd));
       },
       false
     );

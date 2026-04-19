@@ -517,7 +517,8 @@ def set_task_time_bucket_by_id(user_id: int, task_id: int, bucket: str) -> dict[
         return {"ok": False, "message": "Неверный блок: утро, день, вечер или ночь."}
     if not _find_task_in_active(user_id, task_id):
         return {"ok": False, "message": "Задача не найдена."}
-    updated = db.update_task(task_id, user_id, time_of_day=b)
+    # Иначе блок в UI не меняется: _task_time_bucket сначала смотрит на due_time.
+    updated = db.update_task(task_id, user_id, time_of_day=b, due_time=None)
     if updated:
         return {"ok": True, "message": "Время суток обновлено."}
     return {"ok": False, "message": "Не удалось обновить."}

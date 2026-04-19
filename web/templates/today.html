@@ -13,7 +13,7 @@
 {% else %}
 <p class="muted drag-hint">Перетащи строку задачи (не чекбокс и не меню ⋯) в другой блок времени суток.</p>
 <form id="form-complete-today" method="post" action="/tasks/complete?next=/today"></form>
-<div class="task-form card card--flush">
+<div class="task-form card card--flush today-page-card">
   <h2 class="home-section-title">Список на сегодня</h2>
   {% for sec in sections %}
   <section class="today-bucket-section task-drop-section" data-drop-kind="today_bucket" data-drop-bucket="{{ sec.bucket_key }}">
@@ -50,7 +50,7 @@
     </ul>
   </section>
   {% endfor %}
-  <div class="task-form-actions task-form-actions--sticky">
+  <div class="task-form-actions task-form-actions--sticky task-form-actions--viewport-bottom">
     <button type="submit" form="form-complete-today" class="btn-primary btn-block">Отметить выбранное выполненным</button>
   </div>
 </div>

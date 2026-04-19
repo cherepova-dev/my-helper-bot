@@ -562,6 +562,39 @@ h2.bucket {
   padding-right: 1.1rem;
 }
 
+/* «Сегодня»: кнопка завершения закреплена у нижнего края окна (не только внутри карточки) */
+.today-page-card {
+  padding-bottom: calc(4.75rem + env(safe-area-inset-bottom, 0));
+}
+.task-form-actions--viewport-bottom {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  margin: 0 auto;
+  max-width: 40rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  padding-top: 0.65rem;
+  padding-bottom: calc(0.65rem + env(safe-area-inset-bottom, 0));
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -6px 28px rgba(0, 0, 0, 0.35);
+}
+@media (min-width: 769px) {
+  .task-form-actions--viewport-bottom {
+    left: var(--sidebar-w);
+    margin-left: 0;
+    margin-right: 0;
+    max-width: none;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+}
+
 .flash {
   padding: 0.55rem 0.85rem;
   border-radius: 8px;
@@ -656,6 +689,9 @@ pre.task-dump, pre.report {
   width: 2.1rem;
   height: 2.1rem;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 8px;
   border: 1px solid rgba(0, 186, 124, 0.45);
   background: rgba(0, 186, 124, 0.15);
@@ -664,6 +700,7 @@ pre.task-dump, pre.report {
   line-height: 1;
   cursor: pointer;
   align-self: flex-start;
+  z-index: 2;
 }
 .task-text-save:hover {
   background: rgba(0, 186, 124, 0.28);
@@ -958,7 +995,8 @@ pre.task-dump, pre.report {
   right: 0;
   top: 100%;
   margin-top: 0.2rem;
-  min-width: 11rem;
+  min-width: min(20rem, calc(100vw - 2.5rem));
+  max-width: min(26rem, calc(100vw - 1.25rem));
   padding: 0 0 0.35rem;
   background: var(--card);
   border: 1px solid var(--border);
@@ -1022,11 +1060,58 @@ pre.task-dump, pre.report {
 .task-menu-danger:hover { background: rgba(244, 33, 46, 0.12); color: #ff9a9a; }
 /* Блок «Перенос срока»: как у «Категория» — полоска и task-menu-label */
 .task-menu-row-time {
-  padding: 0.35rem 0.75rem 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.65rem;
+  padding: 0.4rem 0.65rem 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
 }
-.task-menu-row-time > .task-menu-label {
-  margin-bottom: 0.35rem;
+.task-menu-row-time > .task-menu-label--time {
+  flex: 0 0 auto;
+  width: 6.75rem;
+  min-width: 5.5rem;
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+.task-time-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.28rem;
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+.task-menu-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0.3rem 0.48rem;
+  width: auto;
+  min-height: 1.85rem;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.task-menu-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.task-menu-chip--muted {
+  color: var(--muted);
+  border-style: dashed;
+}
+.task-menu-chip--muted:hover {
+  color: var(--fg);
 }
 .task-menu-row-move {
   padding: 0.35rem 0.75rem 0.5rem;
@@ -1192,7 +1277,7 @@ pre.task-dump, pre.report {
 .task-project { font-size: 0.88rem; }
 
 /* legacy primary buttons */
-button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-ok):not(.task-text-save) {
+button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-chip):not(.task-menu-ok):not(.task-text-save) {
   padding: 0.5rem 0.9rem;
   border-radius: 8px;
   border: none;

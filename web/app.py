@@ -514,6 +514,7 @@ async def page_today(request: Request):
             empty=len(ordered_today) == 0,
             next_url="/today",
             category_choices=_category_choices(uid),
+            kebab_hide_schedule=True,
         ),
     )
 
