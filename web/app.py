@@ -106,8 +106,94 @@ def _self_ping_url_and_interval() -> tuple[str | None, int]:
         return base, 240
 
 
+def _bootstrap_password_from_env() -> None:
+    """
+    Одноразовая установка email/пароля существующему пользователю через
+    переменные окружения (для случаев, когда нет SSH/Shell к продакшну).
+
+    Включается, если заданы WEB_BOOTSTRAP_EMAIL и WEB_BOOTSTRAP_PASSWORD.
+    Применяется только если в БД РОВНО ОДИН пользователь, у которого
+    ещё нет password_hash (либо WEB_BOOTSTRAP_FORCE=1 — тогда перезапишет
+    в любом случае). После успешной установки пишет в логи и возвращается.
+
+    Безопасно вызывать многократно: если у пользователя уже есть пароль и
+    FORCE не задан, ничего не сделает.
+    """
+    email = (os.environ.get("WEB_BOOTSTRAP_EMAIL", "") or "").strip().lower()
+    password = os.environ.get("WEB_BOOTSTRAP_PASSWORD", "") or ""
+    if not email or not password:
+        return
+
+    err = web_auth.validate_email(email)
+    if err:
+        print(f"[bootstrap] WEB_BOOTSTRAP_EMAIL невалиден: {err}", file=sys.stderr)
+        return
+    err = web_auth.validate_password(password)
+    if err:
+        print(f"[bootstrap] WEB_BOOTSTRAP_PASSWORD невалиден: {err}", file=sys.stderr)
+        return
+
+    force = (os.environ.get("WEB_BOOTSTRAP_FORCE", "") or "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    try:
+        # 1) Если такой email уже привязан к пользователю — ничего не делаем.
+        existing = db.find_user_by_email(email)
+        if existing:
+            print(
+                f"[bootstrap] email={email} уже привязан к user_id={existing['id']}; "
+                "ничего не делаю.",
+                file=sys.stderr,
+            )
+            return
+
+        # 2) Берём единственного пользователя в БД.
+        only = db.get_single_user_if_exactly_one()
+        if not only:
+            n = db.count_users()
+            print(
+                f"[bootstrap] в БД пользователей: {n}. Bootstrap работает только когда "
+                "пользователь в БД ровно один. Удалите лишние строки или используйте "
+                "scripts/set_user_password.py с --user-id.",
+                file=sys.stderr,
+            )
+            return
+
+        user_id = int(only["id"])
+        already_has_pwd = bool((only.get("password_hash") or "").strip())
+        if already_has_pwd and not force:
+            print(
+                f"[bootstrap] у user_id={user_id} уже стоит пароль; пропускаю. "
+                "Чтобы перезаписать — задайте WEB_BOOTSTRAP_FORCE=1.",
+                file=sys.stderr,
+            )
+            return
+
+        pwd_hash = web_auth.hash_password(password)
+        db._execute(
+            "UPDATE users SET email = %s, password_hash = %s, password_algo = %s "
+            "WHERE id = %s",
+            (email, pwd_hash, "argon2", user_id),
+        )
+        print(
+            f"[bootstrap] OK: user_id={user_id} email={email} пароль установлен. "
+            "Удалите WEB_BOOTSTRAP_EMAIL/PASSWORD из переменных окружения.",
+            file=sys.stderr,
+        )
+    except Exception as exc:
+        print(f"[bootstrap] ошибка: {exc}", file=sys.stderr)
+
+
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
+    try:
+        _bootstrap_password_from_env()
+    except Exception as exc:
+        print(f"[bootstrap] неожиданная ошибка: {exc}", file=sys.stderr)
+
     base, interval = _self_ping_url_and_interval()
     task = None
     if interval > 0 and base:
