@@ -20,10 +20,11 @@
   </form>
 </section>
 
-{% set _sort = sort if sort is defined else 'date' %}
+{% set _sort = sort if sort is defined else 'manual' %}
 <nav class="project-sort-toolbar" aria-label="Сортировка задач">
   <span class="muted">Сортировка:</span>
-  <a href="/projects/{{ project_id }}" class="chip{% if _sort == 'date' %} is-active{% endif %}">По сроку</a>
+  <a href="/projects/{{ project_id }}" class="chip{% if _sort == 'manual' %} is-active{% endif %}" title="Стрелки ↑/↓ в меню задачи">По порядку</a>
+  <a href="/projects/{{ project_id }}?sort=date" class="chip{% if _sort == 'date' %} is-active{% endif %}">По сроку</a>
   <a href="/projects/{{ project_id }}?sort=color" class="chip{% if _sort == 'color' %} is-active{% endif %}">По цвету</a>
   <a href="/projects/{{ project_id }}?sort=text" class="chip{% if _sort == 'text' %} is-active{% endif %}">По названию</a>
 </nav>
@@ -93,6 +94,14 @@
       </label>
     </div>
     <button type="submit" class="btn-primary">Сохранить</button>
+  </form>
+</section>
+
+<section class="card project-archive-card">
+  <h2 class="home-section-title">Закрыть проект</h2>
+  <p class="muted">Все активные шаги проекта будут отмечены как выполненные, а проект уедет в архив. Из архива его можно вернуть.</p>
+  <form method="post" action="/projects/{{ project_id }}/archive" onsubmit="return confirm('Закрыть проект? Все активные шаги будут отмечены как выполненные.');">
+    <button type="submit" class="btn-primary">Закрыть и в архив</button>
   </form>
 </section>
 

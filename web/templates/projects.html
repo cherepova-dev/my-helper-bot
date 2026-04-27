@@ -3,7 +3,7 @@
 {% block top_title %}Проекты{% endblock %}
 {% block content %}
 <h1 class="page-heading">Проекты</h1>
-<p class="muted">Большое дело — несколько шагов. Задачи из проекта видны в «Сегодня» и «Все задачи» с пометкой проекта. <a href="/reports/projects">Сводка по проектам →</a></p>
+<p class="muted">Большое дело — несколько шагов. Задачи из проекта видны в «Сегодня» и «Все задачи» с пометкой проекта. <a href="/reports/projects">Сводка по проектам →</a>{% if archived_count and archived_count > 0 %} · <a href="/projects/archive">Архив ({{ archived_count }}) →</a>{% endif %}</p>
 
 <section class="card">
   <h2 class="home-section-title">Новый проект</h2>

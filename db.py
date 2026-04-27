@@ -160,6 +160,7 @@ def _init_tables_pg() -> None:
         "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN archived_at TIMESTAMPTZ",
         "ALTER TABLE users ALTER COLUMN telegram_id DROP NOT NULL",
         "ALTER TABLE users ADD COLUMN email TEXT",
         "ALTER TABLE users ADD COLUMN password_hash TEXT",
@@ -252,6 +253,7 @@ def _init_tables_sqlite() -> None:
         "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
         "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN archived_at TEXT",
         "ALTER TABLE users ADD COLUMN email TEXT",
         "ALTER TABLE users ADD COLUMN password_hash TEXT",
         "ALTER TABLE users ADD COLUMN password_algo TEXT DEFAULT 'argon2'",
@@ -686,8 +688,26 @@ def delete_category_row(user_id: int, category_id: int) -> bool:
 
 # ── Projects ─────────────────────────────────────────────────────────────
 
-def list_projects(user_id: int) -> list[dict]:
-    return _fetchall("SELECT * FROM projects WHERE user_id = %s ORDER BY id DESC", (user_id,))
+def list_projects(user_id: int, include_archived: bool = False) -> list[dict]:
+    """По умолчанию возвращает только активные проекты (archived_at IS NULL)."""
+    if include_archived:
+        return _fetchall(
+            "SELECT * FROM projects WHERE user_id = %s ORDER BY id DESC",
+            (user_id,),
+        )
+    return _fetchall(
+        "SELECT * FROM projects WHERE user_id = %s AND archived_at IS NULL "
+        "ORDER BY id DESC",
+        (user_id,),
+    )
+
+
+def list_archived_projects(user_id: int) -> list[dict]:
+    return _fetchall(
+        "SELECT * FROM projects WHERE user_id = %s AND archived_at IS NOT NULL "
+        "ORDER BY archived_at DESC",
+        (user_id,),
+    )
 
 
 def get_project(user_id: int, project_id: int) -> dict | None:
@@ -695,6 +715,74 @@ def get_project(user_id: int, project_id: int) -> dict | None:
         "SELECT * FROM projects WHERE id = %s AND user_id = %s",
         (project_id, user_id),
     )
+
+
+def archive_project(user_id: int, project_id: int, complete_active: bool = True) -> dict:
+    """Архивирует проект. Если complete_active — отмечает все активные задачи как выполненные.
+
+    Возвращает {ok, message, completed_count}.
+    """
+    proj = get_project(user_id, project_id)
+    if not proj:
+        return {"ok": False, "message": "Проект не найден.", "completed_count": 0}
+    if proj.get("archived_at"):
+        return {"ok": False, "message": "Проект уже в архиве.", "completed_count": 0}
+    now = datetime.now(timezone.utc).isoformat()
+    completed_count = 0
+    _execute(
+        "UPDATE tasks SET project_id = NULL "
+        "WHERE user_id = %s AND project_id = %s "
+        "AND COALESCE(is_routine, FALSE) = TRUE",
+        (user_id, project_id),
+    )
+    if complete_active:
+        rows = _fetchall(
+            "SELECT id FROM tasks WHERE user_id = %s AND project_id = %s "
+            "AND status = 'active' AND COALESCE(is_routine, FALSE) = FALSE",
+            (user_id, project_id),
+        )
+        if rows:
+            ids = [int(r["id"]) for r in rows]
+            if USE_PG:
+                _execute(
+                    "UPDATE tasks SET status = 'done', completed_at = %s "
+                    "WHERE id = ANY(%s) AND user_id = %s AND status = 'active'",
+                    (now, ids, user_id),
+                )
+            else:
+                ph = ",".join("?" for _ in ids)
+                _execute(
+                    f"UPDATE tasks SET status = 'done', completed_at = %s "
+                    f"WHERE id IN ({ph}) AND user_id = %s AND status = 'active'",
+                    (now, *ids, user_id),
+                )
+            completed_count = len(ids)
+    _execute(
+        "UPDATE projects SET archived_at = %s WHERE id = %s AND user_id = %s",
+        (now, project_id, user_id),
+    )
+    return {
+        "ok": True,
+        "message": (
+            f"Проект в архиве. Закрыто задач: {completed_count}."
+            if completed_count
+            else "Проект перенесён в архив."
+        ),
+        "completed_count": completed_count,
+    }
+
+
+def unarchive_project(user_id: int, project_id: int) -> dict:
+    proj = get_project(user_id, project_id)
+    if not proj:
+        return {"ok": False, "message": "Проект не найден."}
+    if not proj.get("archived_at"):
+        return {"ok": False, "message": "Проект и так не в архиве."}
+    _execute(
+        "UPDATE projects SET archived_at = NULL WHERE id = %s AND user_id = %s",
+        (project_id, user_id),
+    )
+    return {"ok": True, "message": "Проект восстановлен."}
 
 
 def create_project(user_id: int, title: str, emoji: str = "📁") -> dict | None:
@@ -807,7 +895,20 @@ def home_counts(user_id: int) -> dict[str, int]:
 
 
 def count_user_projects(user_id: int) -> int:
-    row = _fetchone("SELECT COUNT(*) AS c FROM projects WHERE user_id = %s", (user_id,))
+    row = _fetchone(
+        "SELECT COUNT(*) AS c FROM projects "
+        "WHERE user_id = %s AND archived_at IS NULL",
+        (user_id,),
+    )
+    return int(row["c"]) if row and row.get("c") is not None else 0
+
+
+def count_archived_projects(user_id: int) -> int:
+    row = _fetchone(
+        "SELECT COUNT(*) AS c FROM projects "
+        "WHERE user_id = %s AND archived_at IS NOT NULL",
+        (user_id,),
+    )
     return int(row["c"]) if row and row.get("c") is not None else 0
 
 
@@ -815,17 +916,23 @@ VALID_TASK_COLORS = ("", "red", "orange", "yellow", "green", "blue", "purple", "
 
 
 def get_active_tasks_for_project(
-    user_id: int, project_id: int, sort: str = "date"
+    user_id: int, project_id: int, sort: str = "manual"
 ) -> list[dict]:
     """
     Возвращает активные задачи проекта.
     sort:
-      - "date" (по умолчанию): срок → время → id;
+      - "manual" (по умолчанию): ручной порядок — color_sort → id (для перетаскивания/стрелок);
+      - "date": срок → время → id;
       - "color": задачи без цвета в конце, цветные сгруппированы и отсортированы по color_sort;
       - "text": по тексту задачи (без учёта регистра).
     """
-    s = (sort or "date").strip().lower()
-    if s == "color":
+    s = (sort or "manual").strip().lower()
+    if s == "date":
+        order = (
+            "COALESCE(CAST(due_date AS TEXT), '9999-12-31'), "
+            "COALESCE(CAST(due_time AS TEXT), ''), id"
+        )
+    elif s == "color":
         order = (
             "(COALESCE(color, '') = '') ASC, COALESCE(color, ''), "
             "COALESCE(color_sort, 0), "
@@ -834,15 +941,67 @@ def get_active_tasks_for_project(
     elif s == "text":
         order = "lower(text), id"
     else:
-        order = (
-            "COALESCE(CAST(due_date AS TEXT), '9999-12-31'), "
-            "COALESCE(CAST(due_time AS TEXT), ''), id"
-        )
+        order = "COALESCE(color_sort, 0), id"
     return _fetchall(
         f"SELECT * FROM tasks WHERE user_id = %s AND project_id = %s "
         f"AND status = 'active' ORDER BY {order}",
         (user_id, project_id),
     )
+
+
+def move_task_in_project(user_id: int, task_id: int, direction: str) -> dict:
+    """Двигает задачу вверх/вниз внутри проекта через color_sort.
+
+    Если у активных задач проекта color_sort одинаковые/нулевые — однократно нормализует
+    их по текущему порядку отображения, после чего меняет местами текущую и соседнюю задачи.
+    direction: 'up' | 'down'.
+    """
+    d = (direction or "").strip().lower()
+    if d not in ("up", "down"):
+        return {"ok": False, "message": "Направление должно быть 'up' или 'down'."}
+    task = _fetchone(
+        "SELECT id, project_id FROM tasks "
+        "WHERE id = %s AND user_id = %s AND status = 'active'",
+        (task_id, user_id),
+    )
+    if not task or task.get("project_id") is None:
+        return {"ok": False, "message": "Задача не найдена в проекте."}
+    pid = int(task["project_id"])
+    rows = _fetchall(
+        "SELECT id, COALESCE(color_sort, 0) AS color_sort FROM tasks "
+        "WHERE user_id = %s AND project_id = %s AND status = 'active' "
+        "ORDER BY COALESCE(color_sort, 0), id",
+        (user_id, pid),
+    )
+    if len(rows) < 2:
+        return {"ok": False, "message": "В проекте только одна задача."}
+    cs_values = {int(r["color_sort"]) for r in rows}
+    needs_norm = len(cs_values) < len(rows) or 0 in cs_values
+    if needs_norm:
+        for i, r in enumerate(rows):
+            new_cs = (i + 1) * 10
+            _execute(
+                "UPDATE tasks SET color_sort = %s WHERE id = %s AND user_id = %s",
+                (new_cs, int(r["id"]), user_id),
+            )
+            r["color_sort"] = new_cs
+    idx = next((i for i, r in enumerate(rows) if int(r["id"]) == int(task_id)), -1)
+    if idx < 0:
+        return {"ok": False, "message": "Задача не найдена в порядке."}
+    swap_idx = idx - 1 if d == "up" else idx + 1
+    if swap_idx < 0 or swap_idx >= len(rows):
+        return {"ok": False, "message": "Уже на крайней позиции."}
+    a, b = rows[idx], rows[swap_idx]
+    a_cs, b_cs = int(a["color_sort"]), int(b["color_sort"])
+    _execute(
+        "UPDATE tasks SET color_sort = %s WHERE id = %s AND user_id = %s",
+        (b_cs, int(a["id"]), user_id),
+    )
+    _execute(
+        "UPDATE tasks SET color_sort = %s WHERE id = %s AND user_id = %s",
+        (a_cs, int(b["id"]), user_id),
+    )
+    return {"ok": True, "message": "Порядок обновлён."}
 
 
 def set_task_color(user_id: int, task_id: int, color: str) -> bool:
@@ -1404,6 +1563,93 @@ def complete_task(task_id: int, user_id: int | None = None, task: dict | None = 
         except Exception as e:
             logger.warning("log_routine_completion failed: %s", e)
     return n > 0
+
+
+def complete_tasks_bulk(user_id: int, task_ids: list[int]) -> tuple[list[dict], list[int]]:
+    """Массовая отметка выполненными.
+
+    Возвращает (выполненные_задачи, несуществующие_ids).
+    Делает 1 SELECT (для проверки + получения text/is_routine), 1-2 UPDATE и при необходимости
+    1 INSERT для журнала рутин — всего ≤4 round-trip'а вместо 1 + N.
+    """
+    if not task_ids:
+        return [], []
+    ids = sorted({int(t) for t in task_ids if int(t) > 0})
+    if not ids:
+        return [], []
+    now = datetime.now(timezone.utc).isoformat()
+
+    if USE_PG:
+        rows = _fetchall(
+            "SELECT id, text, is_routine FROM tasks "
+            "WHERE id = ANY(%s) AND user_id = %s AND status = 'active'",
+            (ids, user_id),
+        )
+    else:
+        placeholders = ",".join("?" for _ in ids)
+        rows = _fetchall(
+            f"SELECT id, text, is_routine FROM tasks "
+            f"WHERE id IN ({placeholders}) AND user_id = %s AND status = 'active'",
+            (*ids, user_id),
+        )
+
+    found_ids = {int(r["id"]) for r in rows}
+    missing = [t for t in ids if t not in found_ids]
+    normal_ids = [int(r["id"]) for r in rows if not r.get("is_routine")]
+    routine_ids = [int(r["id"]) for r in rows if r.get("is_routine")]
+
+    if normal_ids:
+        if USE_PG:
+            _execute(
+                "UPDATE tasks SET status = 'done', completed_at = %s "
+                "WHERE id = ANY(%s) AND user_id = %s AND status = 'active'",
+                (now, normal_ids, user_id),
+            )
+        else:
+            ph = ",".join("?" for _ in normal_ids)
+            _execute(
+                f"UPDATE tasks SET status = 'done', completed_at = %s "
+                f"WHERE id IN ({ph}) AND user_id = %s AND status = 'active'",
+                (now, *normal_ids, user_id),
+            )
+
+    if routine_ids:
+        if USE_PG:
+            _execute(
+                "UPDATE tasks SET last_completed_at = %s "
+                "WHERE id = ANY(%s) AND user_id = %s AND status = 'active'",
+                (now, routine_ids, user_id),
+            )
+            try:
+                values = ",".join(["(%s, %s, %s)"] * len(routine_ids))
+                params: list = []
+                for tid in routine_ids:
+                    params.extend([user_id, tid, now])
+                _execute(
+                    f"INSERT INTO routine_completions (user_id, task_id, completed_at) "
+                    f"VALUES {values}",
+                    tuple(params),
+                )
+            except Exception as e:
+                logger.warning("log_routine_completion bulk failed: %s", e)
+        else:
+            ph = ",".join("?" for _ in routine_ids)
+            _execute(
+                f"UPDATE tasks SET last_completed_at = %s "
+                f"WHERE id IN ({ph}) AND user_id = %s AND status = 'active'",
+                (now, *routine_ids, user_id),
+            )
+            for tid in routine_ids:
+                try:
+                    log_routine_completion(user_id, tid, now)
+                except Exception as e:
+                    logger.warning("log_routine_completion failed: %s", e)
+
+    logger.info(
+        "complete_tasks_bulk: user_id=%s normal=%s routine=%s missing=%s",
+        user_id, len(normal_ids), len(routine_ids), len(missing),
+    )
+    return list(rows), missing
 
 
 def uncomplete_task(task_id: int, user_id: int) -> bool:

@@ -275,6 +275,12 @@
         taskActionReload(postTaskAction("/tasks/set_color", fd));
         return;
       }
+      if (action === "move-up" || action === "move-down") {
+        if (btn.disabled) return;
+        fd.append("direction", action === "move-up" ? "up" : "down");
+        taskActionReload(postTaskAction("/tasks/move_in_project", fd));
+        return;
+      }
       if (action === "delete") {
         if (!window.confirm("Удалить эту задачу?")) return;
         taskActionReload(postTaskAction("/tasks/delete_id", fd));

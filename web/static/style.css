@@ -1052,6 +1052,19 @@ pre.task-dump, pre.report {
   border-color: var(--fg, #fff);
 }
 
+.task-menu-row-move-order { padding: 0.4rem 0.6rem; border-top: 1px solid var(--border); }
+.task-move-order-row { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
+.task-move-order-row .task-menu-chip[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+.project-list-item--archived {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+}
+.project-archive-restore button { align-self: flex-start; }
+.project-archive-card { border: 1px solid var(--border); }
+
 .help-text {
   white-space: pre-wrap;
   word-break: break-word;
@@ -1522,7 +1535,7 @@ pre.task-dump, pre.report {
 .task-project { font-size: 0.88rem; }
 
 /* legacy primary buttons */
-button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-chip):not(.task-menu-ok):not(.task-text-save) {
+button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-chip):not(.task-menu-ok):not(.task-text-save):not(.color-swatch):not(.task-move-btn) {
   padding: 0.5rem 0.9rem;
   border-radius: 8px;
   border: none;

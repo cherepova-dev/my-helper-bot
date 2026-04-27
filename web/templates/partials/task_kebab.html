@@ -57,6 +57,15 @@
       <button type="button" class="task-menu-item routine-repeat-save" data-action="save-repeat-days">Сохранить расписание</button>
     </div>
     {% endif %}
+    {% if row.show_move %}
+    <div class="task-menu-row-move-order" role="group" aria-label="Порядок в проекте">
+      <span class="task-menu-label">Порядок</span>
+      <div class="task-move-order-row">
+        <button type="button" class="task-menu-chip" data-action="move-up" {% if not row.can_move_up %}disabled{% endif %} aria-label="Переместить выше">↑ Выше</button>
+        <button type="button" class="task-menu-chip" data-action="move-down" {% if not row.can_move_down %}disabled{% endif %} aria-label="Переместить ниже">↓ Ниже</button>
+      </div>
+    </div>
+    {% endif %}
     <button type="button" class="task-menu-item" data-action="edit-text">Изменить текст</button>
     {% if row.is_routine %}
     <button type="button" class="task-menu-item" data-action="make-normal">Сделать обычной задачей</button>

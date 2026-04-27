@@ -232,23 +232,15 @@ def complete_task_numbers(user_id: int, nums: list[int]) -> tuple[list[str], lis
 
 
 def complete_task_ids(user_id: int, task_ids: list[int]) -> tuple[list[str], list[int]]:
-    """Отмечает выполненными задачи по id (активный список). Возвращает (заголовки, id с ошибкой)."""
-    from bot_v2 import _active_tasks_display_order
+    """Отмечает выполненными задачи по id (активный список). Возвращает (заголовки, id с ошибкой).
 
-    ordered = _active_tasks_display_order(user_id)
-    by_id = {t["id"]: t for t in ordered}
-    ok_titles: list[str] = []
-    fail_ids: list[int] = []
-    for tid in sorted(set(task_ids)):
-        task = by_id.get(tid)
-        if not task:
-            fail_ids.append(tid)
-            continue
-        if db.complete_task(task["id"], user_id, task=task):
-            ok_titles.append(task["text"])
-        else:
-            fail_ids.append(tid)
-    return ok_titles, fail_ids
+    Использует батч-операцию db.complete_tasks_bulk: вместо 1 + N round-trip'ов делает 2-4.
+    """
+    if not task_ids:
+        return [], []
+    completed, missing = db.complete_tasks_bulk(user_id, task_ids)
+    ok_titles = [str(r.get("text") or "") for r in completed]
+    return ok_titles, missing
 
 
 def delete_task_by_number(user_id: int, num: int, is_routine: bool) -> dict[str, Any]:

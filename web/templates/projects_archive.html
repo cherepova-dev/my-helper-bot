@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Архив проектов{% endblock %}
+{% block top_title %}Архив{% endblock %}
+{% block content %}
+<nav class="toolbar-sub" aria-label="К проектам">
+  <a href="/projects" class="muted">← Все проекты</a>
+</nav>
+<h1 class="page-heading">Архив проектов</h1>
+<p class="muted">Сюда переезжают закрытые проекты. Задачи внутри них уже отмечены выполненными. Любой проект можно вернуть в активные.</p>
+
+{% if empty %}
+<p class="muted">Архив пока пустой.</p>
+{% else %}
+<section class="card card--flush">
+  <ul class="project-list">
+    {% for p in projects %}
+    <li class="project-list-item project-list-item--archived">
+      <div class="project-list-link" style="cursor:default">
+        <span class="project-list-emoji">{{ p.emoji }}</span>
+        <span class="project-list-title">{{ p.title }}</span>
+        <span class="muted project-list-meta">
+          закрыт{% if p.archived_label %}: {{ p.archived_label }}{% endif %}
+          · завершено: {{ p.n_done_all }}
+        </span>
+      </div>
+      <form method="post" action="/projects/{{ p.id }}/unarchive" class="project-archive-restore">
+        <button type="submit" class="btn-primary">Вернуть в активные</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

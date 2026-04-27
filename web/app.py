@@ -1001,11 +1001,71 @@ async def page_projects(request: Request):
                 "n_active": counts.get(pid, 0),
             }
         )
+    archived_count = db.count_archived_projects(uid)
     return templates.TemplateResponse(
         request,
         "projects.html",
-        _ctx(projects=project_rows, empty=len(project_rows) == 0),
+        _ctx(
+            projects=project_rows,
+            empty=len(project_rows) == 0,
+            archived_count=archived_count,
+        ),
     )
+
+
+@app.get("/projects/archive", response_class=HTMLResponse)
+async def page_projects_archive(request: Request):
+    if not _is_authenticated(request):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    raw = db.list_archived_projects(uid)
+    rows: list[dict] = []
+    from bot_v2 import _format_date_human
+
+    for p in raw:
+        pid = int(p["id"])
+        n_done_all = db.count_done_tasks_in_project_all(uid, pid)
+        archived_at = p.get("archived_at")
+        a_label = ""
+        if archived_at:
+            raw_a = str(archived_at).replace("Z", "")
+            ds = raw_a[:10]
+            if len(ds) == 10 and ds[4] == "-":
+                a_label = _format_date_human(ds)
+            else:
+                a_label = raw_a[:16]
+        rows.append(
+            {
+                "id": pid,
+                "title": (p.get("title") or "").strip(),
+                "emoji": ((p.get("emoji") or "📁").strip() or "📁"),
+                "n_done_all": n_done_all,
+                "archived_label": a_label,
+            }
+        )
+    return templates.TemplateResponse(
+        request,
+        "projects_archive.html",
+        _ctx(projects=rows, empty=len(rows) == 0),
+    )
+
+
+@app.post("/projects/{project_id}/archive")
+async def action_project_archive(request: Request, project_id: int):
+    if not _is_authenticated(request):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = db.archive_project(uid, project_id, complete_active=True)
+    return _flash_redirect(request, "/projects", result["message"], result["ok"])
+
+
+@app.post("/projects/{project_id}/unarchive")
+async def action_project_unarchive(request: Request, project_id: int):
+    if not _is_authenticated(request):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = db.unarchive_project(uid, project_id)
+    return _flash_redirect(request, "/projects/archive", result["message"], result["ok"])
 
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
@@ -1019,13 +1079,15 @@ async def page_project_detail(request: Request, project_id: int):
     from bot_v2 import _format_date_human, _format_time_human
 
     _maybe_transfer_overdue(uid)
-    sort = (request.query_params.get("sort") or "date").strip().lower()
-    if sort not in ("date", "color", "text"):
-        sort = "date"
+    sort = (request.query_params.get("sort") or "manual").strip().lower()
+    if sort not in ("manual", "date", "color", "text"):
+        sort = "manual"
     tasks = db.get_active_tasks_for_project(uid, project_id, sort=sort)
     db.attach_project_labels(uid, tasks)
     rows: list[dict] = []
-    for t in tasks:
+    _total = len(tasks)
+    _show_move = sort == "manual"
+    for _idx, t in enumerate(tasks):
         emoji = _task_row_emoji(t)
         tp = ""
         if t.get("due_time"):
@@ -1047,6 +1109,9 @@ async def page_project_detail(request: Request, project_id: int):
                 "repeat_interval": "",
                 "has_project": False,
                 "project_label": "",
+                "show_move": _show_move,
+                "can_move_up": _show_move and _idx > 0,
+                "can_move_down": _show_move and _idx < _total - 1,
             }
         )
     done_tasks = db.get_done_tasks_for_project(uid, project_id)
@@ -1065,7 +1130,7 @@ async def page_project_detail(request: Request, project_id: int):
             {"text": (t.get("text") or "").strip(), "done_label": done_label}
         )
     next_url = f"/projects/{project_id}"
-    if sort != "date":
+    if sort != "manual":
         next_url = f"/projects/{project_id}?sort={sort}"
     w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
     n_done_week = db.count_done_tasks_in_project_between(uid, project_id, w_start_utc, w_end_utc)
@@ -1565,6 +1630,26 @@ async def action_set_category(
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row(request)["id"]
     result = set_task_category_by_id(uid, task_id, category_name)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/move_in_project")
+async def action_move_in_project(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/projects"),
+    direction: str = Form("up"),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse(
+                {"ok": False, "message": "Требуется вход."}, status_code=401
+            )
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = db.move_task_in_project(uid, task_id, direction)
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])
