@@ -17,6 +17,7 @@
       <nav class="sidebar-nav" aria-label="Разделы приложения">
         <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Обзор</span></div>
         <a href="/today" class="nav-link{% if path.startswith('/today') %} is-active{% endif %}">Сегодня</a>
+        <a href="/plan" class="nav-link{% if path.startswith('/plan') %} is-active{% endif %}">Планирование</a>
         <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Задачи</span></div>
         <a href="/tasks" class="nav-link{% if path == '/tasks' %} is-active{% endif %}">Все задачи</a>
         <a href="/projects" class="nav-link{% if path.startswith('/projects') %} is-active{% endif %}">Проекты</a>

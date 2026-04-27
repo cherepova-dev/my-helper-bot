@@ -367,7 +367,7 @@ def resolve_web_user_row(request: Request | None = None) -> dict:
     if only:
         return only
 
-    raise RuntimeError(
+        raise RuntimeError(
         "Не удалось определить пользователя: войдите в систему или зарегистрируйтесь."
     )
 
@@ -434,8 +434,8 @@ async def login_post(
             request,
             "login.html",
             {"error": "Неверный email или пароль.", "email": email_norm},
-            status_code=401,
-        )
+        status_code=401,
+    )
 
     if web_auth.needs_rehash(user["password_hash"]):
         try:
@@ -559,6 +559,8 @@ _FLASH_PATHS = frozenset(
         "/reports/week",
         "/reports/projects",
         "/projects",
+        "/projects/archive",
+        "/plan",
         "/settings",
     }
 )
@@ -807,6 +809,7 @@ async def page_today(request: Request):
                         "is_routine": bool(t.get("is_routine")),
                         "category_name": (t.get("category_name") or "").strip(),
                         "color": (t.get("color") or "").strip().lower(),
+                        "estimate_min": int(t.get("estimate_min") or 0),
                         "repeat_day": rd,
                         "repeat_day_codes": _repeat_day_codes(rd),
                         "repeat_interval": _repeat_interval_for_row(rd),
@@ -874,6 +877,7 @@ async def page_tasks(request: Request):
             "is_routine": bool(t.get("is_routine")),
             "category_name": (t.get("category_name") or "").strip(),
             "color": (t.get("color") or "").strip().lower(),
+            "estimate_min": int(t.get("estimate_min") or 0),
             "repeat_day": rd,
             "repeat_day_codes": _repeat_day_codes(rd),
             "repeat_interval": _repeat_interval_for_row(rd),
@@ -1068,6 +1072,251 @@ async def action_project_unarchive(request: Request, project_id: int):
     return _flash_redirect(request, "/projects/archive", result["message"], result["ok"])
 
 
+# ── Планирование дня ─────────────────────────────────────────────────────
+
+PLAN_DAY_START_MIN = 6 * 60   # 06:00
+PLAN_DAY_END_MIN = 24 * 60    # 24:00 (показываем сетку до полуночи)
+PLAN_SLOT_STEP_MIN = 30
+PLAN_DURATION_PRESETS = (5, 15, 30, 45, 60, 90, 120, 180)
+
+
+def _format_min_as_hhmm(m: int) -> str:
+    m = max(0, min(int(m), 24 * 60 - 1))
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _parse_hhmm_to_min(value: str) -> int | None:
+    s = (value or "").strip()
+    if not s or ":" not in s:
+        return None
+    try:
+        h, m = s.split(":", 1)
+        h_i, m_i = int(h), int(m)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= h_i < 24 and 0 <= m_i < 60):
+        return None
+    return h_i * 60 + m_i
+
+
+def _humanize_minutes(total: int) -> str:
+    total = max(0, int(total))
+    if total <= 0:
+        return "0 мин"
+    h, m = divmod(total, 60)
+    if h and m:
+        return f"{h} ч {m} мин"
+    if h:
+        return f"{h} ч"
+    return f"{m} мин"
+
+
+@app.get("/plan", response_class=HTMLResponse)
+async def page_plan(request: Request):
+    if not _is_authenticated(request):
+        return RedirectResponse("/login", status_code=302)
+    from bot_v2 import _format_date_human
+    from datetime import date as _date, timedelta as _td
+
+    uid = get_user_row(request)["id"]
+    today_str = db.user_local_date_offset(uid, 0)
+    raw_date = (request.query_params.get("date") or "").strip() or today_str
+    try:
+        d = _date.fromisoformat(raw_date)
+    except (TypeError, ValueError):
+        d = _date.fromisoformat(today_str)
+    date_str = d.strftime("%Y-%m-%d")
+    prev_date = (d - _td(days=1)).strftime("%Y-%m-%d")
+    next_date = (d + _td(days=1)).strftime("%Y-%m-%d")
+
+    slots = db.get_plan_slots(uid, date_str)
+    planned_task_ids = {int(s["task_id"]) for s in slots}
+
+    day_tasks = db.get_tasks_for_date(uid, date_str)
+    db.attach_project_labels(uid, day_tasks)
+
+    backlog: list[dict] = []
+    for t in day_tasks:
+        if int(t["id"]) in planned_task_ids:
+            continue
+        emoji = _task_row_emoji(t)
+        backlog.append(
+            {
+                "task_id": int(t["id"]),
+                "text": t["text"],
+                "emoji": emoji,
+                "color": (t.get("color") or "").strip().lower(),
+                "is_routine": bool(t.get("is_routine")),
+                "estimate_min": int(t.get("estimate_min") or 0),
+                "project_label": (t.get("project_title") or "").strip(),
+            }
+        )
+
+    other_tasks: list[dict] = []
+    extras = db.get_active_tasks_ordered(uid)
+    db.attach_project_labels(uid, extras)
+    day_task_ids = {int(t["id"]) for t in day_tasks}
+    for t in extras:
+        tid = int(t["id"])
+        if tid in day_task_ids or tid in planned_task_ids:
+            continue
+        if t.get("is_routine"):
+            continue
+        other_tasks.append(
+            {
+                "task_id": tid,
+                "text": t["text"],
+                "emoji": _task_row_emoji(t),
+                "color": (t.get("color") or "").strip().lower(),
+                "estimate_min": int(t.get("estimate_min") or 0),
+                "project_label": (t.get("project_title") or "").strip(),
+                "due_date": t.get("due_date") or "",
+            }
+        )
+
+    slot_blocks: list[dict] = []
+    total_planned = 0
+    for s in slots:
+        start = int(s["start_min"])
+        dur = int(s["duration_min"])
+        total_planned += dur
+        slot_blocks.append(
+            {
+                "slot_id": int(s["slot_id"]),
+                "task_id": int(s["task_id"]),
+                "text": s["text"],
+                "color": (s.get("color") or "").strip().lower(),
+                "is_routine": bool(s.get("is_routine")),
+                "start_min": start,
+                "duration_min": dur,
+                "start_label": _format_min_as_hhmm(start),
+                "end_label": _format_min_as_hhmm(start + dur),
+                "duration_label": _humanize_minutes(dur),
+            }
+        )
+
+    grid_rows: list[dict] = []
+    for m in range(PLAN_DAY_START_MIN, PLAN_DAY_END_MIN, PLAN_SLOT_STEP_MIN):
+        grid_rows.append(
+            {
+                "start_min": m,
+                "label": _format_min_as_hhmm(m),
+                "is_hour": (m % 60 == 0),
+            }
+        )
+
+    is_today = date_str == today_str
+    is_past = d < _date.fromisoformat(today_str)
+
+    return templates.TemplateResponse(
+        request,
+        "plan.html",
+        _ctx(
+            date_str=date_str,
+            date_label=_format_date_human(date_str),
+            prev_date=prev_date,
+            next_date=next_date,
+            today_str=today_str,
+            is_today=is_today,
+            is_past=is_past,
+            backlog=backlog,
+            other_tasks=other_tasks,
+            slots=slot_blocks,
+            grid_rows=grid_rows,
+            slot_step_min=PLAN_SLOT_STEP_MIN,
+            day_start_min=PLAN_DAY_START_MIN,
+            day_end_min=PLAN_DAY_END_MIN,
+            duration_presets=PLAN_DURATION_PRESETS,
+            total_planned_min=total_planned,
+            total_planned_label=_humanize_minutes(total_planned),
+            backlog_count=len(backlog),
+            color_choices=TASK_COLOR_CHOICES,
+        ),
+    )
+
+
+@app.post("/plan/add_slot")
+async def action_plan_add_slot(
+    request: Request,
+    task_id: int = Form(...),
+    date: str = Form(...),
+    start: str = Form(...),
+    duration_min: int = Form(...),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    start_min = _parse_hhmm_to_min(start)
+    if start_min is None:
+        result = {"ok": False, "message": "Не понял время старта."}
+    else:
+        result = db.add_plan_slot(uid, date, task_id, start_min, int(duration_min))
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, f"/plan?date={date}", result["message"], result["ok"])
+
+
+@app.post("/plan/update_slot")
+async def action_plan_update_slot(
+    request: Request,
+    slot_id: int = Form(...),
+    date: str = Form(...),
+    start: str = Form(...),
+    duration_min: int = Form(...),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    start_min = _parse_hhmm_to_min(start)
+    if start_min is None:
+        result = {"ok": False, "message": "Не понял время старта."}
+    else:
+        result = db.update_plan_slot(uid, slot_id, start_min, int(duration_min))
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, f"/plan?date={date}", result["message"], result["ok"])
+
+
+@app.post("/plan/remove_slot")
+async def action_plan_remove_slot(
+    request: Request,
+    slot_id: int = Form(...),
+    date: str = Form(...),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = db.remove_plan_slot(uid, slot_id)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, f"/plan?date={date}", result["message"], result["ok"])
+
+
+@app.post("/tasks/set_estimate")
+async def action_set_estimate(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/plan"),
+    minutes: int = Form(0),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    ok = db.set_task_estimate(uid, task_id, int(minutes))
+    result = {"ok": ok, "message": "Оценка обновлена." if ok else "Не удалось обновить."}
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
 async def page_project_detail(request: Request, project_id: int):
     if not _is_authenticated(request):
@@ -1104,6 +1353,7 @@ async def page_project_detail(request: Request, project_id: int):
                 "is_routine": False,
                 "category_name": (t.get("category_name") or "").strip(),
                 "color": (t.get("color") or "").strip().lower(),
+                "estimate_min": int(t.get("estimate_min") or 0),
                 "repeat_day": "",
                 "repeat_day_codes": [],
                 "repeat_interval": "",
@@ -1207,6 +1457,8 @@ async def page_routines(request: Request):
                     "repeat_label": repeat_label,
                     "is_routine": True,
                     "category_name": (t.get("category_name") or "").strip(),
+                    "color": (t.get("color") or "").strip().lower(),
+                    "estimate_min": int(t.get("estimate_min") or 0),
                     "repeat_day": rd,
                     "repeat_day_codes": _repeat_day_codes(rd),
                     "repeat_interval": _repeat_interval_for_row(rd),

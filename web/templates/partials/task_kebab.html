@@ -66,6 +66,15 @@
       </div>
     </div>
     {% endif %}
+    <div class="task-menu-row-select">
+      <span class="task-menu-label">Сколько займёт</span>
+      <div class="task-time-chips" role="group" aria-label="Оценка времени">
+        {% set _est = (row.estimate_min or 0) %}
+        {% for d in [0, 5, 15, 30, 60, 90, 120] %}
+        <button type="button" class="task-menu-chip{% if _est == d %} is-active{% endif %}" data-action="set-estimate" data-minutes="{{ d }}" aria-label="{% if d == 0 %}Без оценки{% else %}{{ d }} минут{% endif %}">{% if d == 0 %}—{% else %}{{ d }}м{% endif %}</button>
+        {% endfor %}
+      </div>
+    </div>
     <button type="button" class="task-menu-item" data-action="edit-text">Изменить текст</button>
     {% if row.is_routine %}
     <button type="button" class="task-menu-item" data-action="make-normal">Сделать обычной задачей</button>

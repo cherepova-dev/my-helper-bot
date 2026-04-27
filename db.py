@@ -151,6 +151,17 @@ def _init_tables_pg() -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_rc_user_time ON routine_completions(user_id, completed_at);
     CREATE INDEX IF NOT EXISTS idx_rc_user_task ON routine_completions(user_id, task_id);
+    CREATE TABLE IF NOT EXISTS daily_plan_slots (
+        id              SERIAL PRIMARY KEY,
+        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_date       TEXT NOT NULL,
+        task_id         INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        start_min       INTEGER NOT NULL,
+        duration_min    INTEGER NOT NULL,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_dps_user_date ON daily_plan_slots(user_id, plan_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_unique ON daily_plan_slots(user_id, plan_date, task_id);
     """)
     for col_sql in (
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
@@ -160,6 +171,7 @@ def _init_tables_pg() -> None:
         "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN estimate_min INTEGER DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN archived_at TIMESTAMPTZ",
         "ALTER TABLE users ALTER COLUMN telegram_id DROP NOT NULL",
         "ALTER TABLE users ADD COLUMN email TEXT",
@@ -243,6 +255,17 @@ def _init_tables_sqlite() -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_rc_user_time ON routine_completions(user_id, completed_at);
     CREATE INDEX IF NOT EXISTS idx_rc_user_task ON routine_completions(user_id, task_id);
+    CREATE TABLE IF NOT EXISTS daily_plan_slots (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         INTEGER NOT NULL REFERENCES users(id),
+        plan_date       TEXT NOT NULL,
+        task_id         INTEGER NOT NULL REFERENCES tasks(id),
+        start_min       INTEGER NOT NULL,
+        duration_min    INTEGER NOT NULL,
+        created_at      TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_dps_user_date ON daily_plan_slots(user_id, plan_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_unique ON daily_plan_slots(user_id, plan_date, task_id);
     """)
     _conn.commit()
     for col_sql in (
@@ -253,6 +276,7 @@ def _init_tables_sqlite() -> None:
         "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
         "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN estimate_min INTEGER DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN archived_at TEXT",
         "ALTER TABLE users ADD COLUMN email TEXT",
         "ALTER TABLE users ADD COLUMN password_hash TEXT",
@@ -1562,6 +1586,172 @@ def complete_task(task_id: int, user_id: int | None = None, task: dict | None = 
             log_routine_completion(user_id, task_id, now)
         except Exception as e:
             logger.warning("log_routine_completion failed: %s", e)
+    return n > 0
+
+
+def get_tasks_for_date(user_id: int, date_str: str) -> list[dict]:
+    """Активные задачи и подходящие рутины на указанную дату (YYYY-MM-DD).
+
+    Логика близка к get_today_tasks, но для произвольной даты в TZ пользователя.
+    Рутины, выполненные в этот день (last_completed_at в окне даты), исключаются.
+    Задачи с due_date IS NULL — не включаются (мы хотим именно «то, что назначено на дату»).
+    """
+    from datetime import date as _date
+
+    try:
+        d = _date.fromisoformat(date_str)
+    except (TypeError, ValueError):
+        return []
+    weekday = d.weekday()
+    start_utc = _local_date_start_utc(user_id, date_str)
+    next_str = (d + timedelta(days=1)).strftime("%Y-%m-%d")
+    end_utc = _local_date_start_utc(user_id, next_str)
+
+    rows = _fetchall(
+        "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+        "AND (due_date = %s OR (COALESCE(is_routine, FALSE) = TRUE AND due_date IS NULL)) "
+        "ORDER BY id",
+        (user_id, date_str),
+    )
+    out: list[dict] = []
+    for t in rows:
+        if t.get("is_routine"):
+            if not _routine_matches_today(t, weekday, date_str):
+                continue
+            lc = t.get("last_completed_at") or ""
+            if lc:
+                lc_str = (lc if isinstance(lc, str) else str(lc)).strip()
+                if " " in lc_str and "T" not in lc_str:
+                    lc_str = lc_str.replace(" ", "T", 1)
+                if start_utc <= lc_str < end_utc:
+                    continue
+            out.append(t)
+        else:
+            if t.get("project_id") and not t.get("due_date"):
+                continue
+            out.append(t)
+    return out
+
+
+# ── Daily plan slots ─────────────────────────────────────────────────────
+
+def get_plan_slots(user_id: int, date_str: str) -> list[dict]:
+    """Возвращает запланированные слоты на дату вместе с данными задач.
+
+    Поля результата: id (slot_id), task_id, start_min, duration_min, text,
+    color, emoji, is_routine, status, due_date, estimate_min.
+    """
+    rows = _fetchall(
+        "SELECT s.id AS slot_id, s.task_id, s.start_min, s.duration_min, "
+        "       t.text, t.color, t.category_emoji, t.category_name, "
+        "       COALESCE(t.is_routine, FALSE) AS is_routine, "
+        "       t.status, t.due_date, t.due_time, t.project_id, "
+        "       COALESCE(t.estimate_min, 0) AS estimate_min, "
+        "       t.last_completed_at, t.repeat_day "
+        "FROM daily_plan_slots s JOIN tasks t ON t.id = s.task_id "
+        "WHERE s.user_id = %s AND s.plan_date = %s "
+        "ORDER BY s.start_min, s.id",
+        (user_id, date_str),
+    )
+    return rows
+
+
+def add_plan_slot(
+    user_id: int,
+    date_str: str,
+    task_id: int,
+    start_min: int,
+    duration_min: int,
+) -> dict:
+    """Добавляет задачу в план дня. Уникальность (user, date, task_id) гарантируется индексом.
+
+    Возвращает {ok, message, slot_id?}.
+    """
+    if duration_min <= 0 or duration_min > 24 * 60:
+        return {"ok": False, "message": "Длительность от 5 до 1440 минут."}
+    if start_min < 0 or start_min >= 24 * 60:
+        return {"ok": False, "message": "Время старта вне диапазона дня."}
+    if start_min + duration_min > 24 * 60:
+        return {"ok": False, "message": "Задача не помещается до конца суток."}
+    task = _fetchone(
+        "SELECT id, status FROM tasks WHERE id = %s AND user_id = %s",
+        (task_id, user_id),
+    )
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    existing = _fetchone(
+        "SELECT id FROM daily_plan_slots WHERE user_id = %s AND plan_date = %s AND task_id = %s",
+        (user_id, date_str, task_id),
+    )
+    if existing:
+        n = _execute(
+            "UPDATE daily_plan_slots SET start_min = %s, duration_min = %s "
+            "WHERE id = %s AND user_id = %s",
+            (start_min, duration_min, int(existing["id"]), user_id),
+        )
+        return {"ok": n > 0, "message": "Слот обновлён.", "slot_id": int(existing["id"])}
+    if USE_PG:
+        row = _fetchone(
+            "INSERT INTO daily_plan_slots (user_id, plan_date, task_id, start_min, duration_min) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (user_id, date_str, task_id, start_min, duration_min),
+        )
+        if not row:
+            return {"ok": False, "message": "Не удалось добавить."}
+        return {"ok": True, "message": "Задача в плане.", "slot_id": int(row["id"])}
+    n = _execute(
+        "INSERT INTO daily_plan_slots (user_id, plan_date, task_id, start_min, duration_min) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (user_id, date_str, task_id, start_min, duration_min),
+    )
+    if n <= 0:
+        return {"ok": False, "message": "Не удалось добавить."}
+    row = _fetchone(
+        "SELECT id FROM daily_plan_slots "
+        "WHERE user_id = %s AND plan_date = %s AND task_id = %s",
+        (user_id, date_str, task_id),
+    )
+    return {
+        "ok": True,
+        "message": "Задача в плане.",
+        "slot_id": int(row["id"]) if row else 0,
+    }
+
+
+def update_plan_slot(
+    user_id: int, slot_id: int, start_min: int, duration_min: int
+) -> dict:
+    if duration_min <= 0 or duration_min > 24 * 60:
+        return {"ok": False, "message": "Длительность от 5 до 1440 минут."}
+    if start_min < 0 or start_min >= 24 * 60:
+        return {"ok": False, "message": "Время старта вне диапазона дня."}
+    if start_min + duration_min > 24 * 60:
+        return {"ok": False, "message": "Задача не помещается до конца суток."}
+    n = _execute(
+        "UPDATE daily_plan_slots SET start_min = %s, duration_min = %s "
+        "WHERE id = %s AND user_id = %s",
+        (start_min, duration_min, slot_id, user_id),
+    )
+    return {"ok": n > 0, "message": "Слот обновлён." if n > 0 else "Слот не найден."}
+
+
+def remove_plan_slot(user_id: int, slot_id: int) -> dict:
+    n = _execute(
+        "DELETE FROM daily_plan_slots WHERE id = %s AND user_id = %s",
+        (slot_id, user_id),
+    )
+    return {"ok": n > 0, "message": "Убрано из плана." if n > 0 else "Слот не найден."}
+
+
+def set_task_estimate(user_id: int, task_id: int, minutes: int) -> bool:
+    """Устанавливает estimate_min задачи. minutes >= 0; 0 = без оценки."""
+    m = int(minutes or 0)
+    if m < 0 or m > 24 * 60:
+        return False
+    n = _execute(
+        "UPDATE tasks SET estimate_min = %s WHERE id = %s AND user_id = %s",
+        (m, task_id, user_id),
+    )
     return n > 0
 
 

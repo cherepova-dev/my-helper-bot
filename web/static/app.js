@@ -281,6 +281,13 @@
         taskActionReload(postTaskAction("/tasks/move_in_project", fd));
         return;
       }
+      if (action === "set-estimate") {
+        var mins = btn.getAttribute("data-minutes") || "0";
+        fd.append("minutes", mins);
+        fd.append("next", line.dataset.nextUrl || "/today");
+        taskActionReload(postTaskAction("/tasks/set_estimate", fd));
+        return;
+      }
       if (action === "delete") {
         if (!window.confirm("Удалить эту задачу?")) return;
         taskActionReload(postTaskAction("/tasks/delete_id", fd));

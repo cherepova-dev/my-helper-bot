@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Планирование — {{ date_label }}{% endblock %}
+{% block top_title %}Планирование{% endblock %}
+{% block content %}
+<h1 class="page-heading">Планирование дня</h1>
+
+<section class="card plan-day-toolbar">
+  <div class="plan-day-row">
+    <a class="plan-nav-btn" href="/plan?date={{ prev_date }}" aria-label="Предыдущий день">←</a>
+    <div class="plan-day-current">
+      <div class="plan-day-label">{{ date_label }}{% if is_today %} <span class="muted">· сегодня</span>{% elif is_past %} <span class="muted">· в прошлом</span>{% endif %}</div>
+      <form method="get" action="/plan" class="plan-date-form">
+        <input type="date" name="date" value="{{ date_str }}" aria-label="Выбрать дату">
+        <button type="submit" class="btn-primary">Открыть</button>
+      </form>
+    </div>
+    <a class="plan-nav-btn" href="/plan?date={{ next_date }}" aria-label="Следующий день">→</a>
+  </div>
+  <div class="plan-budget muted">
+    Запланировано: <strong>{{ total_planned_label }}</strong>
+    {% if backlog_count %} · в бэклоге на этот день: <strong>{{ backlog_count }}</strong>{% endif %}
+  </div>
+</section>
+
+<div class="plan-layout">
+  <section class="card plan-backlog-card">
+    <h2 class="home-section-title">Бэклог на день</h2>
+    <p class="muted">Задачи и рутины, назначенные на этот день. Тапни «В план», чтобы поставить во временной слот.</p>
+    {% if backlog %}
+    <ul class="plan-backlog-list">
+      {% for row in backlog %}
+      <li class="plan-backlog-item{% if row.color %} has-color color-{{ row.color }}{% endif %}" data-task-id="{{ row.task_id }}">
+        <div class="plan-backlog-main">
+          <span class="plan-backlog-emoji">{{ row.emoji }}</span>
+          <span class="plan-backlog-text">{{ row.text }}</span>
+          {% if row.is_routine %}<span class="plan-backlog-tag muted">рутина</span>{% endif %}
+          {% if row.estimate_min %}<span class="plan-backlog-est muted">~{{ row.estimate_min }} мин</span>{% endif %}
+          {% if row.project_label %}<span class="plan-backlog-proj muted">{{ row.project_label }}</span>{% endif %}
+        </div>
+        <details class="plan-add-form">
+          <summary class="btn-primary plan-add-summary">В план</summary>
+          <form method="post" action="/plan/add_slot" class="plan-add-grid">
+            <input type="hidden" name="task_id" value="{{ row.task_id }}">
+            <input type="hidden" name="date" value="{{ date_str }}">
+            <label class="plan-add-label">Время старта
+              <input type="time" name="start" step="900" value="09:00" required>
+            </label>
+            <label class="plan-add-label">Длительность
+              <select name="duration_min" required aria-label="Длительность">
+                {% for d in duration_presets %}
+                <option value="{{ d }}"{% if (row.estimate_min and row.estimate_min == d) or (not row.estimate_min and d == 30) %} selected{% endif %}>{{ d }} мин</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button type="submit" class="btn-primary">Поставить</button>
+          </form>
+        </details>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">На эту дату задач не назначено.</p>
+    {% endif %}
+
+    {% if other_tasks %}
+    <details class="plan-other-tasks">
+      <summary class="muted plan-other-summary">Добавить другую задачу из общего списка</summary>
+      <ul class="plan-backlog-list plan-backlog-list--secondary">
+        {% for row in other_tasks %}
+        <li class="plan-backlog-item{% if row.color %} has-color color-{{ row.color }}{% endif %}">
+          <div class="plan-backlog-main">
+            <span class="plan-backlog-emoji">{{ row.emoji }}</span>
+            <span class="plan-backlog-text">{{ row.text }}</span>
+            {% if row.due_date %}<span class="plan-backlog-tag muted">{{ row.due_date }}</span>{% endif %}
+            {% if row.estimate_min %}<span class="plan-backlog-est muted">~{{ row.estimate_min }} мин</span>{% endif %}
+            {% if row.project_label %}<span class="plan-backlog-proj muted">{{ row.project_label }}</span>{% endif %}
+          </div>
+          <details class="plan-add-form">
+            <summary class="btn-primary plan-add-summary">В план</summary>
+            <form method="post" action="/plan/add_slot" class="plan-add-grid">
+              <input type="hidden" name="task_id" value="{{ row.task_id }}">
+              <input type="hidden" name="date" value="{{ date_str }}">
+              <label class="plan-add-label">Время старта
+                <input type="time" name="start" step="900" value="09:00" required>
+              </label>
+              <label class="plan-add-label">Длительность
+                <select name="duration_min" required aria-label="Длительность">
+                  {% for d in duration_presets %}
+                  <option value="{{ d }}"{% if (row.estimate_min and row.estimate_min == d) or (not row.estimate_min and d == 30) %} selected{% endif %}>{{ d }} мин</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <button type="submit" class="btn-primary">Поставить</button>
+            </form>
+          </details>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </section>
+
+  <section class="card plan-grid-card">
+    <h2 class="home-section-title">Расписание дня</h2>
+    <p class="muted">Сетка по 30 минут с 06:00 до 24:00. Тапни блок задачи, чтобы изменить время или убрать.</p>
+    <div class="plan-grid" style="--plan-step:{{ slot_step_min }}; --plan-start:{{ day_start_min }};">
+      {% for s in slots %}
+      <details class="plan-slot{% if s.color %} has-color color-{{ s.color }}{% endif %}"
+               style="top: {{ ((s.start_min - day_start_min) / slot_step_min) * 36 }}px; height: {{ (s.duration_min / slot_step_min) * 36 - 2 }}px;">
+        <summary class="plan-slot-summary">
+          <span class="plan-slot-time">{{ s.start_label }}–{{ s.end_label }}</span>
+          <span class="plan-slot-text">{{ s.text }}</span>
+          <span class="plan-slot-dur muted">{{ s.duration_label }}</span>
+        </summary>
+        <div class="plan-slot-actions">
+          <form method="post" action="/plan/update_slot" class="plan-add-grid">
+            <input type="hidden" name="slot_id" value="{{ s.slot_id }}">
+            <input type="hidden" name="date" value="{{ date_str }}">
+            <label class="plan-add-label">Время
+              <input type="time" name="start" step="900" value="{{ s.start_label }}" required>
+            </label>
+            <label class="plan-add-label">Длительность
+              <select name="duration_min" required aria-label="Длительность">
+                {% for d in duration_presets %}
+                <option value="{{ d }}"{% if d == s.duration_min %} selected{% endif %}>{{ d }} мин</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button type="submit" class="btn-primary">Сохранить</button>
+          </form>
+          <form method="post" action="/plan/remove_slot" class="plan-slot-remove" onsubmit="return confirm('Убрать задачу из плана?');">
+            <input type="hidden" name="slot_id" value="{{ s.slot_id }}">
+            <input type="hidden" name="date" value="{{ date_str }}">
+            <button type="submit" class="btn-danger-outline">Убрать</button>
+          </form>
+        </div>
+      </details>
+      {% endfor %}
+      {% for r in grid_rows %}
+      <div class="plan-grid-row{% if r.is_hour %} plan-grid-row--hour{% endif %}" style="top: {{ ((r.start_min - day_start_min) / slot_step_min) * 36 }}px;">
+        <span class="plan-grid-time muted">{{ r.label }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}
