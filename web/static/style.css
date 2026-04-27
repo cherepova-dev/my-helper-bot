@@ -957,22 +957,14 @@ pre.task-dump, pre.report {
   gap: 1rem;
 }
 
-/* === Цветная полоса задачи и кнопки выбора цвета ======================= */
-.task-color-stripe {
-  display: inline-block;
-  width: 4px;
-  align-self: stretch;
-  border-radius: 3px;
-  margin-right: 0.5rem;
-  background: transparent;
-}
+/* === Цвета задач: палитра, метки и выбор ============================== */
 .task-color-red    { background: #e25555; }
 .task-color-orange { background: #e6964b; }
 .task-color-yellow { background: #d9c350; }
 .task-color-green  { background: #4caf73; }
 .task-color-blue   { background: #4a8eff; }
 .task-color-purple { background: #a06ad6; }
-.task-color-gray   { background: #777; }
+.task-color-gray   { background: #888; }
 
 .project-sort-toolbar {
   display: flex;
@@ -996,44 +988,68 @@ pre.task-dump, pre.report {
   color: #fff;
 }
 
-/* Цветной маркер слева у задачи (через border-left на .task-line). */
-.task-line.has-color { border-left: 4px solid transparent; padding-left: 0.4rem; }
-.task-line.color-red    { border-left-color: #e25555; }
-.task-line.color-orange { border-left-color: #e6964b; }
-.task-line.color-yellow { border-left-color: #d9c350; }
-.task-line.color-green  { border-left-color: #4caf73; }
-.task-line.color-blue   { border-left-color: #4a8eff; }
-.task-line.color-purple { border-left-color: #a06ad6; }
-.task-line.color-gray   { border-left-color: #777; }
+/* Цветная маркировка задачи: толстая полоса слева + лёгкая подсветка фона. */
+.task-line.has-color {
+  position: relative;
+  border-left: 6px solid transparent;
+  padding-left: 0.6rem;
+  border-radius: 0 6px 6px 0;
+}
+.task-line.color-red    { border-left-color: #e25555; background: rgba(226, 85, 85, 0.08); }
+.task-line.color-orange { border-left-color: #e6964b; background: rgba(230, 150, 75, 0.08); }
+.task-line.color-yellow { border-left-color: #d9c350; background: rgba(217, 195, 80, 0.10); }
+.task-line.color-green  { border-left-color: #4caf73; background: rgba(76, 175, 115, 0.08); }
+.task-line.color-blue   { border-left-color: #4a8eff; background: rgba(74, 142, 255, 0.08); }
+.task-line.color-purple { border-left-color: #a06ad6; background: rgba(160, 106, 214, 0.08); }
+.task-line.color-gray   { border-left-color: #888;    background: rgba(136, 136, 136, 0.10); }
 
+/* Палитра выбора цвета внутри меню «⋯»: компактный ряд цветных кружков. */
 .color-picker {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.4rem 0;
-}
-.color-picker button {
-  display: inline-flex;
+  gap: 0.45rem;
+  padding: 0.3rem 0 0.1rem;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.3rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fg);
-  cursor: pointer;
-  font-size: 0.85rem;
 }
-.color-picker button.is-active {
-  border-color: var(--accent, #4a8eff);
-  background: rgba(74, 142, 255, 0.1);
-}
-.color-picker .swatch-dot {
-  display: inline-block;
-  width: 0.7rem;
-  height: 0.7rem;
+.color-swatch {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: #777;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+}
+.color-swatch.task-color-red    { background: #e25555; }
+.color-swatch.task-color-orange { background: #e6964b; }
+.color-swatch.task-color-yellow { background: #d9c350; }
+.color-swatch.task-color-green  { background: #4caf73; }
+.color-swatch.task-color-blue   { background: #4a8eff; }
+.color-swatch.task-color-purple { background: #a06ad6; }
+.color-swatch.task-color-gray   { background: #888; }
+.color-swatch:hover { transform: scale(1.12); }
+.color-swatch.is-active {
+  border-color: var(--fg, #fff);
+  box-shadow: 0 0 0 2px var(--bg, #1a1a1a), 0 0 0 4px var(--accent, #4a8eff);
+}
+.color-swatch--none {
+  background: transparent;
+  border: 2px dashed rgba(127, 127, 127, 0.7);
+  position: relative;
+}
+.color-swatch--none::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-top: 2px solid rgba(200, 80, 80, 0.85);
+  transform: rotate(-45deg);
+  transform-origin: center;
+}
+.color-swatch--none.is-active {
+  border-style: solid;
+  border-color: var(--fg, #fff);
 }
 
 .help-text {

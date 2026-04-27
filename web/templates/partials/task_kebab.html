@@ -24,15 +24,13 @@
         {% for c in color_choices %}
         <button
           type="button"
-          class="task-color-btn{% if _cur_color == c.id %} is-active{% endif %}"
+          class="color-swatch{% if not c.id %} color-swatch--none{% endif %}{% if c.id %} task-color-{{ c.id }}{% endif %}{% if _cur_color == c.id %} is-active{% endif %}"
           data-action="set-color"
           data-color="{{ c.id }}"
           aria-label="{{ c.label }}"
+          title="{{ c.label }}"
           draggable="false"
-        >
-          <span class="swatch-dot{% if c.id %} task-color-{{ c.id }}{% endif %}"></span>
-          {{ c.label }}
-        </button>
+        ></button>
         {% endfor %}
       </div>
     </div>
