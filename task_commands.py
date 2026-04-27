@@ -637,6 +637,30 @@ def set_task_category_by_id(user_id: int, task_id: int, category_name: str) -> d
     return {"ok": False, "message": "Не удалось обновить."}
 
 
+_COLOR_LABEL = {
+    "": "без цвета",
+    "red": "🔴 красный",
+    "orange": "🟠 оранжевый",
+    "yellow": "🟡 жёлтый",
+    "green": "🟢 зелёный",
+    "blue": "🔵 синий",
+    "purple": "🟣 фиолетовый",
+    "gray": "⚫ серый",
+}
+
+
+def set_task_color_by_id(user_id: int, task_id: int, color: str) -> dict[str, Any]:
+    c = (color or "").strip().lower()
+    if c not in db.VALID_TASK_COLORS:
+        return {"ok": False, "message": "Недопустимый цвет."}
+    task = _find_task_in_active(user_id, task_id)
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    if not db.set_task_color(user_id, task_id, c):
+        return {"ok": False, "message": "Не удалось обновить."}
+    return {"ok": True, "message": f"Цвет: {_COLOR_LABEL.get(c, c or 'без цвета')}"}
+
+
 def set_task_repeat_day_by_id(user_id: int, task_id: int, repeat_day: str) -> dict[str, Any]:
     raw = (repeat_day or "").strip()
     if not raw:

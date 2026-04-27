@@ -3,20 +3,50 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Вход</title>
+  <title>Вход — Помощник</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="login-page">
   <div class="login-box">
-    <h1>Помощник</h1>
+    <h1>Войти в Помощник</h1>
+    <p class="login-sub">Войдите в свой аккаунт, чтобы продолжить.</p>
     {% if error %}
-    <p class="error">{{ error }}</p>
+    <p class="error" role="alert">{{ error }}</p>
     {% endif %}
-    <form method="post" action="/login">
+    <form method="post" action="/login" autocomplete="on" novalidate>
+      <input type="hidden" name="csrf" value="{{ csrf_token_for(request) }}">
+      <label for="email">Email</label>
+      <input
+        type="email"
+        name="email"
+        id="email"
+        required
+        autocomplete="email"
+        inputmode="email"
+        autofocus
+        value="{{ email or '' }}"
+      >
       <label for="password">Пароль</label>
-      <input type="password" name="password" id="password" required autocomplete="current-password">
+      <input
+        type="password"
+        name="password"
+        id="password"
+        required
+        autocomplete="current-password"
+        minlength="8"
+      >
       <button type="submit">Войти</button>
     </form>
+    <div class="login-extra">
+      {% set _sup = support_contact() %}
+      {% if _sup %}
+      <a href="{{ _sup }}" class="link-muted">Забыли пароль?</a>
+      {% else %}
+      <span class="muted">Забыли пароль? Восстановление по email пока в разработке — напишите в поддержку.</span>
+      {% endif %}
+      <span class="dot">·</span>
+      <a href="/signup">Создать аккаунт</a>
+    </div>
   </div>
 </body>
 </html>

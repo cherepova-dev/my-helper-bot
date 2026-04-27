@@ -269,6 +269,12 @@
         taskActionReload(postTaskAction("/tasks/routine_snooze_today", fd));
         return;
       }
+      if (action === "set-color") {
+        var col = (btn.getAttribute("data-color") || "").trim();
+        fd.append("color", col);
+        taskActionReload(postTaskAction("/tasks/set_color", fd));
+        return;
+      }
       if (action === "delete") {
         if (!window.confirm("Удалить эту задачу?")) return;
         taskActionReload(postTaskAction("/tasks/delete_id", fd));

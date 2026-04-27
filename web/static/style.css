@@ -798,24 +798,242 @@ pre.task-dump, pre.report {
   border: 1px solid var(--border);
 }
 .login-box h1 { margin-top: 0; font-size: 1.25rem; }
-.login-box input[type="password"] {
+.login-box .login-sub { margin: 0.25rem 0 1rem; color: var(--muted, #888); font-size: 0.9rem; }
+.login-box label {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted, #888);
+}
+.login-box input[type="password"],
+.login-box input[type="email"],
+.login-box input[type="text"] {
   width: 100%;
-  padding: 0.5rem;
-  margin: 0.5rem 0 1rem;
+  padding: 0.55rem 0.7rem;
+  margin: 0.35rem 0 0.6rem;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: #000;
   color: var(--fg);
+  font-size: 1rem;
+  box-sizing: border-box;
 }
-.login-box .error { color: var(--err); font-size: 0.9rem; }
+.login-box .error {
+  color: var(--err);
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  background: rgba(255, 80, 80, 0.08);
+}
 .login-box button {
-  padding: 0.5rem 0.9rem;
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  margin-top: 0.5rem;
   border-radius: 6px;
   border: none;
   background: var(--accent);
   color: #fff;
   cursor: pointer;
   font-weight: 600;
+  font-size: 1rem;
+}
+.login-extra {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.login-extra .dot { color: var(--muted, #666); }
+.link-muted { color: var(--muted, #888); text-decoration: none; }
+.link-muted:hover { text-decoration: underline; }
+.muted { color: var(--muted, #888); }
+
+/* === Лендинг для анонимных пользователей =============================== */
+.landing-page {
+  min-height: 100vh;
+  background: var(--bg, #0b0b0d);
+  color: var(--fg, #f1f1f1);
+  font-family: inherit;
+}
+.landing-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.landing-header .brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  text-decoration: none;
+  color: var(--fg);
+}
+.landing-nav {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.btn-primary {
+  display: inline-block;
+  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  background: var(--accent, #4a8eff);
+  color: #fff !important;
+  text-decoration: none;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+.btn-primary:hover { filter: brightness(1.1); }
+.btn-secondary {
+  display: inline-block;
+  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--fg) !important;
+  text-decoration: none;
+  font-weight: 600;
+  background: transparent;
+}
+.btn-lg { padding: 0.8rem 1.5rem; font-size: 1.05rem; }
+.landing-main {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+.hero h1 {
+  font-size: clamp(1.6rem, 2.6vw + 1rem, 2.6rem);
+  line-height: 1.15;
+  margin: 0 0 1rem;
+}
+.hero-lead {
+  font-size: 1.05rem;
+  color: var(--muted, #aaa);
+  margin: 0 0 1.5rem;
+  max-width: 40rem;
+}
+.hero-cta { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.hero-trust { margin-top: 1rem; font-size: 0.9rem; color: var(--muted, #888); }
+.benefits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin: 3rem 0;
+}
+.benefit {
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card, #15161a);
+}
+.benefit h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.benefit-short { color: var(--muted, #aaa); margin: 0 0 0.75rem; font-size: 0.95rem; }
+.benefit-how { font-size: 0.9rem; line-height: 1.5; margin: 0; }
+.how-it-works h2,
+.cta-final h2 { font-size: 1.4rem; margin: 2rem 0 1rem; }
+.steps { padding-left: 1.2rem; line-height: 1.6; }
+.steps li { margin-bottom: 0.5rem; }
+.cta-final {
+  margin-top: 3rem;
+  text-align: center;
+  padding: 2rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card, #15161a);
+}
+.cta-final p { color: var(--muted, #aaa); margin: 0 0 1.25rem; }
+.landing-footer {
+  text-align: center;
+  padding: 1.5rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted, #888);
+  font-size: 0.9rem;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+}
+
+/* === Цветная полоса задачи и кнопки выбора цвета ======================= */
+.task-color-stripe {
+  display: inline-block;
+  width: 4px;
+  align-self: stretch;
+  border-radius: 3px;
+  margin-right: 0.5rem;
+  background: transparent;
+}
+.task-color-red    { background: #e25555; }
+.task-color-orange { background: #e6964b; }
+.task-color-yellow { background: #d9c350; }
+.task-color-green  { background: #4caf73; }
+.task-color-blue   { background: #4a8eff; }
+.task-color-purple { background: #a06ad6; }
+.task-color-gray   { background: #777; }
+
+.project-sort-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 0.5rem 0 1rem;
+}
+.project-sort-toolbar .chip {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+.project-sort-toolbar .chip.is-active {
+  background: var(--accent, #4a8eff);
+  border-color: var(--accent, #4a8eff);
+  color: #fff;
+}
+
+/* Цветной маркер слева у задачи (через border-left на .task-line). */
+.task-line.has-color { border-left: 4px solid transparent; padding-left: 0.4rem; }
+.task-line.color-red    { border-left-color: #e25555; }
+.task-line.color-orange { border-left-color: #e6964b; }
+.task-line.color-yellow { border-left-color: #d9c350; }
+.task-line.color-green  { border-left-color: #4caf73; }
+.task-line.color-blue   { border-left-color: #4a8eff; }
+.task-line.color-purple { border-left-color: #a06ad6; }
+.task-line.color-gray   { border-left-color: #777; }
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.4rem 0;
+}
+.color-picker button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.color-picker button.is-active {
+  border-color: var(--accent, #4a8eff);
+  background: rgba(74, 142, 255, 0.1);
+}
+.color-picker .swatch-dot {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: #777;
 }
 
 .help-text {

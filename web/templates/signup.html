@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Регистрация — Помощник</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+  <div class="login-box">
+    <h1>Создать аккаунт</h1>
+    <p class="login-sub">Бесплатно. Никаких подтверждений по email пока не нужно.</p>
+    {% if error %}
+    <p class="error" role="alert">{{ error }}</p>
+    {% endif %}
+    <form method="post" action="/signup" autocomplete="on" novalidate>
+      <input type="hidden" name="csrf" value="{{ csrf_token_for(request) }}">
+      <label for="email">Email</label>
+      <input
+        type="email"
+        name="email"
+        id="email"
+        required
+        autocomplete="email"
+        inputmode="email"
+        autofocus
+        value="{{ email or '' }}"
+      >
+      <label for="name">Как к вам обращаться (необязательно)</label>
+      <input
+        type="text"
+        name="name"
+        id="name"
+        autocomplete="name"
+        maxlength="80"
+        value="{{ name or '' }}"
+      >
+      <label for="password">Пароль (минимум 8 символов)</label>
+      <input
+        type="password"
+        name="password"
+        id="password"
+        required
+        autocomplete="new-password"
+        minlength="8"
+      >
+      <label for="password2">Пароль ещё раз</label>
+      <input
+        type="password"
+        name="password2"
+        id="password2"
+        required
+        autocomplete="new-password"
+        minlength="8"
+      >
+      <button type="submit">Создать аккаунт</button>
+    </form>
+    <div class="login-extra">
+      <span class="muted">Уже есть аккаунт?</span>
+      <a href="/login">Войти</a>
+    </div>
+  </div>
+</body>
+</html>

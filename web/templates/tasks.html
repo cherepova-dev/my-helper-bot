@@ -14,7 +14,7 @@
     <h2 class="task-section-heading">{{ section.section_title }}</h2>
     <ul class="task-list task-list--compact task-list--dropzone">
       {% for row in section.rows %}
-      <li class="task-line drag-enabled" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
+      <li class="task-line drag-enabled{% if row.color %} has-color color-{{ row.color }}{% endif %}" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row task-line-row--list">
           <div class="task-num-emoji task-num-emoji--static" draggable="false">
             <span class="emoji">{{ row.emoji }}</span>

@@ -16,6 +16,27 @@
       </select>
     </div>
     {% endif %}
+    {% if color_choices is defined %}
+    {% set _cur_color = (row.color or '') %}
+    <div class="task-menu-row-select">
+      <span class="task-menu-label">Цвет</span>
+      <div class="color-picker" role="group" aria-label="Цвет задачи" data-task-id="{{ row.task_id }}">
+        {% for c in color_choices %}
+        <button
+          type="button"
+          class="task-color-btn{% if _cur_color == c.id %} is-active{% endif %}"
+          data-action="set-color"
+          data-color="{{ c.id }}"
+          aria-label="{{ c.label }}"
+          draggable="false"
+        >
+          <span class="swatch-dot{% if c.id %} task-color-{{ c.id }}{% endif %}"></span>
+          {{ c.label }}
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
     {% if row.is_routine and not (kebab_hide_schedule | default(false)) %}
     {% set rd = row.repeat_day or '' %}
     {% set rdc = row.repeat_day_codes if row.repeat_day_codes is defined else [] %}

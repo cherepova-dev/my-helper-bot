@@ -20,16 +20,24 @@
   </form>
 </section>
 
+{% set _sort = sort if sort is defined else 'date' %}
+<nav class="project-sort-toolbar" aria-label="Сортировка задач">
+  <span class="muted">Сортировка:</span>
+  <a href="/projects/{{ project_id }}" class="chip{% if _sort == 'date' %} is-active{% endif %}">По сроку</a>
+  <a href="/projects/{{ project_id }}?sort=color" class="chip{% if _sort == 'color' %} is-active{% endif %}">По цвету</a>
+  <a href="/projects/{{ project_id }}?sort=text" class="chip{% if _sort == 'text' %} is-active{% endif %}">По названию</a>
+</nav>
+
 {% if empty %}
 <p class="muted">В проекте пока нет активных шагов.</p>
 {% else %}
-<form id="form-complete-project" method="post" action="/tasks/complete?next=/projects/{{ project_id }}"></form>
+<form id="form-complete-project" method="post" action="/tasks/complete?next={{ next_url }}"></form>
 <div class="task-page-sections">
   <section class="task-date-section">
     <h2 class="task-section-heading">Активные шаги</h2>
     <ul class="task-list task-list--compact">
       {% for row in rows %}
-      <li class="task-line" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="0">
+      <li class="task-line{% if row.color %} has-color color-{{ row.color }}{% endif %}" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="0">
         <div class="task-line-row task-line-row--list">
           <input class="task-cb" type="checkbox" name="task_id" value="{{ row.task_id }}" id="pcb{{ row.task_id }}" form="form-complete-project" draggable="false">
           <label class="task-num-emoji task-num-emoji--static" for="pcb{{ row.task_id }}" draggable="false">

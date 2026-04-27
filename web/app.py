@@ -10,11 +10,12 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import ai_module
 import db
@@ -34,6 +35,7 @@ from web.web_copy import (
 )
 from categories import builtin_keywords_for_name, keywords_text_to_json
 from web.report_html import report_text_to_html
+from web import auth as web_auth
 from task_commands import (
     add_project_task_from_text,
     add_task_from_text,
@@ -46,6 +48,7 @@ from task_commands import (
     reschedule_task_by_id,
     routine_snooze_from_today_plan,
     set_task_category_by_id,
+    set_task_color_by_id,
     set_task_repeat_day_by_id,
     set_task_routine_kind_by_id,
     set_task_time_bucket_by_id,
@@ -92,13 +95,15 @@ def _self_ping_url_and_interval() -> tuple[str | None, int]:
         return None, 0
     if raw == "0":
         return None, 0
+    # Render free tier засыпает после ~15 минут неактивности; 240 секунд
+    # надёжно держит сервис «горячим», не создавая значимой нагрузки.
     if raw == "":
-        return base, 840
+        return base, 240
     try:
         n = int(raw)
         return (base, n) if n > 0 else (None, 0)
     except ValueError:
-        return base, 840
+        return base, 240
 
 
 @asynccontextmanager
@@ -130,6 +135,20 @@ async def _app_lifespan(_app: FastAPI):
             pass
 
 
+_sentry_dsn = os.environ.get("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+            environment=os.environ.get("SENTRY_ENV", "production"),
+        )
+    except Exception as exc:
+        print(f"Sentry init failed: {exc}", file=sys.stderr)
+
+
 app = FastAPI(
     title="Helper Web", docs_url=None, redoc_url=None, lifespan=_app_lifespan
 )
@@ -140,7 +159,64 @@ if not _secret:
     if os.environ.get("RENDER", "").lower() == "true":
         print("WARNING: WEB_SESSION_SECRET not set; set it in production.", file=sys.stderr)
 
-app.add_middleware(SessionMiddleware, secret_key=_secret, same_site="lax")
+_in_prod = os.environ.get("RENDER", "").lower() == "true" or os.environ.get(
+    "WEB_HTTPS_ONLY", ""
+).lower() in ("1", "true", "yes")
+
+# Сначала добавляются middleware, которые должны выполняться ВНУТРИ session
+# (т.к. add_middleware идёт в обратном порядке).
+class _OriginCsrfMiddleware(BaseHTTPMiddleware):
+    """
+    Защита от CSRF: state-changing методы должны иметь Origin/Referer того же
+    хоста, что и сам запрос. Браузеры всегда шлют Origin при кросс-сайтовых
+    POST/PUT/DELETE, поэтому проверки достаточно для типичных сценариев.
+    """
+
+    SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in self.SAFE_METHODS:
+            return await call_next(request)
+        host = request.headers.get("host", "").split(":")[0].lower()
+        origin = request.headers.get("origin", "")
+        referer = request.headers.get("referer", "")
+        if not origin and not referer:
+            # Нет Origin/Referer — вероятно, тулинг (curl, тесты, healthcheck).
+            # Браузеры всегда шлют Origin на cross-site POST, поэтому CSRF
+            # из браузера всё равно будет пойман ниже.
+            return await call_next(request)
+
+        allowed_hosts = {host} if host else set()
+        for h in os.environ.get("WEB_ALLOWED_HOSTS", "").split(","):
+            h = h.strip().lower()
+            if h:
+                allowed_hosts.add(h)
+
+        from urllib.parse import urlparse
+
+        def _host_of(url: str) -> str:
+            try:
+                return (urlparse(url).hostname or "").lower()
+            except Exception:
+                return ""
+
+        check = origin or referer
+        if _host_of(check) in allowed_hosts:
+            return await call_next(request)
+
+        return JSONResponse(
+            {"ok": False, "message": "Forbidden (origin)"}, status_code=403
+        )
+
+
+app.add_middleware(_OriginCsrfMiddleware)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_secret,
+    same_site="lax",
+    https_only=_in_prod,
+    max_age=30 * 24 * 3600,
+)
 
 
 def _consume_flash(request: Request) -> dict:
@@ -154,21 +230,43 @@ def _consume_flash(request: Request) -> dict:
 templates.env.globals["consume_flash"] = _consume_flash
 
 
-def _password_ok() -> str:
-    p = os.environ.get("WEB_APP_PASSWORD", "").strip()
-    if not p:
-        return ""
-    return p
+def _csrf_token_for_template(request: Request) -> str:
+    return web_auth.csrf_token(request)
 
 
-def resolve_web_user_row() -> dict:
+templates.env.globals["csrf_token_for"] = _csrf_token_for_template
+
+
+def _support_contact() -> str:
+    """Контакт для ссылки «Забыли пароль?» до подключения SMTP."""
+    return (os.environ.get("SUPPORT_CONTACT", "") or "").strip()
+
+
+templates.env.globals["support_contact"] = _support_contact
+
+
+# Контекст текущего запроса: id пользователя из сессии. Хранится в request.state.
+def _set_request_user_id(request: Request) -> int | None:
+    uid = web_auth.current_user_id(request)
+    request.state.user_id = uid
+    return uid
+
+
+def resolve_web_user_row(request: Request | None = None) -> dict:
     """
-    Пользователь веба:
-    1) WEB_INTERNAL_USER_ID — явно;
-    2) иначе, если в БД ровно одна строка users — она (типичный случай «один пользователь»);
-    3) иначе — синтетический telegram_id (новый пользователь; пустая история).
-    Если пользователей больше одного и id не задан — ошибка конфигурации.
+    Кто залогинен:
+    1) сессия (request.session["user_id"]) — основной способ после регистрации;
+    2) WEB_INTERNAL_USER_ID — для legacy-режима «одного пользователя»;
+    3) иначе, если в БД ровно одна строка users — она;
+    4) иначе RuntimeError (новый пользователь должен зарегистрироваться).
     """
+    if request is not None:
+        uid = web_auth.current_user_id(request)
+        if uid is not None:
+            u = db.get_user_by_id(uid)
+            if u:
+                return u
+
     wid = os.environ.get("WEB_INTERNAL_USER_ID", "").strip()
     if wid:
         u = db.get_user_by_id(int(wid))
@@ -183,19 +281,21 @@ def resolve_web_user_row() -> dict:
     if only:
         return only
 
-    if db.count_users() > 1:
-        ids = db.list_user_ids()
-        raise RuntimeError(
-            "В БД несколько пользователей; задайте WEB_INTERNAL_USER_ID "
-            f"(доступные id: {ids})."
-        )
-
-    tg = int(os.environ.get("WEB_SYNTHETIC_TELEGRAM_ID", "9999999999999999"))
-    return db.get_or_create_user(tg, "Web")
+    raise RuntimeError(
+        "Не удалось определить пользователя: войдите в систему или зарегистрируйтесь."
+    )
 
 
-def get_user_row() -> dict:
-    return resolve_web_user_row()
+def get_user_row(request: Request | None = None) -> dict:
+    return resolve_web_user_row(request)
+
+
+def _is_authenticated(request: Request) -> bool:
+    """
+    Считается аутентифицированным, если в сессии есть user_id.
+    Старый флаг auth=True больше не принимается (миграция аутентификации).
+    """
+    return web_auth.is_authenticated(request)
 
 
 @app.get("/health")
@@ -205,35 +305,140 @@ def health() -> dict:
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    if request.session.get("auth"):
+    if _is_authenticated(request):
         return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse(request, "login.html", {"error": None})
+    return templates.TemplateResponse(
+        request, "login.html", {"error": None, "email": ""}
+    )
 
 
 @app.post("/login")
-async def login_post(request: Request, password: str = Form("")):
-    expected = _password_ok()
-    if not expected:
+async def login_post(
+    request: Request,
+    email: str = Form(""),
+    password: str = Form(""),
+):
+    email_norm = (email or "").strip().lower()
+    ip = web_auth.client_ip(request)
+    if web_auth.rate_limit_hit(f"login:{ip}:{email_norm}"):
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Пароль не настроен на сервере (WEB_APP_PASSWORD)."},
-            status_code=500,
+            {
+                "error": "Слишком много попыток входа. Подождите минуту.",
+                "email": email_norm,
+            },
+            status_code=429,
         )
-    if password.strip() == expected:
-        request.session["auth"] = True
+
+    err = web_auth.validate_email(email_norm)
+    if err:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": err, "email": email_norm},
+            status_code=400,
+        )
+
+    user = db.find_user_by_email(email_norm)
+    if not user or not user.get("password_hash") or not web_auth.verify_password(
+        user["password_hash"], password
+    ):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Неверный email или пароль.", "email": email_norm},
+            status_code=401,
+        )
+
+    if web_auth.needs_rehash(user["password_hash"]):
+        try:
+            db.set_password_hash(user["id"], web_auth.hash_password(password))
+        except Exception:
+            pass
+
+    web_auth.login_user(request, int(user["id"]))
+    return RedirectResponse("/", status_code=302)
+
+
+@app.get("/signup", response_class=HTMLResponse)
+async def signup_page(request: Request):
+    if _is_authenticated(request):
         return RedirectResponse("/", status_code=302)
     return templates.TemplateResponse(
-        request,
-        "login.html",
-        {"error": "Неверный пароль."},
-        status_code=401,
+        request, "signup.html", {"error": None, "email": "", "name": ""}
     )
+
+
+@app.post("/signup")
+async def signup_post(
+    request: Request,
+    email: str = Form(""),
+    password: str = Form(""),
+    password2: str = Form(""),
+    name: str = Form(""),
+):
+    email_norm = (email or "").strip().lower()
+    name_norm = (name or "").strip()
+
+    ip = web_auth.client_ip(request)
+    if web_auth.rate_limit_hit(f"signup:{ip}"):
+        return templates.TemplateResponse(
+            request,
+            "signup.html",
+            {
+                "error": "Слишком много попыток. Попробуйте через минуту.",
+                "email": email_norm,
+                "name": name_norm,
+            },
+            status_code=429,
+        )
+
+    err = web_auth.validate_email(email_norm) or web_auth.validate_password(password)
+    if not err and password != password2:
+        err = "Пароли не совпадают."
+    if err:
+        return templates.TemplateResponse(
+            request,
+            "signup.html",
+            {"error": err, "email": email_norm, "name": name_norm},
+            status_code=400,
+        )
+
+    if db.find_user_by_email(email_norm):
+        return templates.TemplateResponse(
+            request,
+            "signup.html",
+            {
+                "error": "Аккаунт с таким email уже существует. Войдите.",
+                "email": email_norm,
+                "name": name_norm,
+            },
+            status_code=409,
+        )
+
+    pwd_hash = web_auth.hash_password(password)
+    try:
+        user = db.create_user_with_email(email_norm, pwd_hash, name_norm)
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "signup.html",
+            {
+                "error": f"Не удалось создать аккаунт: {exc}",
+                "email": email_norm,
+                "name": name_norm,
+            },
+            status_code=500,
+        )
+
+    web_auth.login_user(request, int(user["id"]))
+    return RedirectResponse("/", status_code=302)
 
 
 @app.get("/logout")
 async def logout(request: Request):
-    request.session.clear()
+    web_auth.logout_user(request)
     return RedirectResponse("/login", status_code=302)
 
 
@@ -291,6 +496,18 @@ def _category_choices(uid: int) -> list[dict]:
     if not any(c["name"] == "Другое" for c in out):
         out.append({"name": "Другое", "emoji": "📝"})
     return out
+
+
+TASK_COLOR_CHOICES = (
+    {"id": "", "label": "Без цвета", "swatch": "—"},
+    {"id": "red", "label": "Красный", "swatch": "🔴"},
+    {"id": "orange", "label": "Оранжевый", "swatch": "🟠"},
+    {"id": "yellow", "label": "Жёлтый", "swatch": "🟡"},
+    {"id": "green", "label": "Зелёный", "swatch": "🟢"},
+    {"id": "blue", "label": "Синий", "swatch": "🔵"},
+    {"id": "purple", "label": "Фиолетовый", "swatch": "🟣"},
+    {"id": "gray", "label": "Серый", "swatch": "⚫"},
+)
 
 
 def _task_row_emoji(t: dict) -> str:
@@ -359,17 +576,32 @@ def _flash_redirect(request: Request, dest: str, message: str, ok: bool) -> Redi
 
 @app.get("/", response_class=HTMLResponse)
 async def page_home(request: Request):
-    if not request.session.get("auth"):
-        return RedirectResponse("/login", status_code=302)
+    if not _is_authenticated(request):
+        return templates.TemplateResponse(
+            request,
+            "landing.html",
+            _ctx(
+                job_1_title=JOB_1_TITLE,
+                job_1_short=JOB_1_SHORT,
+                job_1_how=JOB_1_HOW,
+                job_2_title=JOB_2_TITLE,
+                job_2_short=JOB_2_SHORT,
+                job_2_how=JOB_2_HOW,
+                job_3_title=JOB_3_TITLE,
+                job_3_short=JOB_3_SHORT,
+                job_3_how=JOB_3_HOW,
+            ),
+        )
 
-    user_row = get_user_row()
+    user_row = get_user_row(request)
     uid = user_row["id"]
     _maybe_transfer_overdue(uid)
     # Без _active_tasks_display_order: на главной нужны только числа (COUNT / len «сегодня»).
     today_tasks = db.get_today_tasks(uid)
     n_today = len(today_tasks)
-    n_tasks = db.count_active_tasks(uid)
-    n_routines = db.count_active_routines(uid)
+    counts = db.home_counts(uid)
+    n_tasks = counts["n_tasks"]
+    n_routines = counts["n_routines"]
     n_done_today = db.count_done_tasks_today(uid)
     n_projects = db.count_user_projects(uid)
     name = (user_row.get("first_name") or "").strip() or "друг"
@@ -434,11 +666,11 @@ def _show_today_bucket(bucket: str, hour: int, n_rows: int) -> bool:
 
 @app.get("/today", response_class=HTMLResponse)
 async def page_today(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     from bot_v2 import _active_tasks_display_order, _format_time_human
 
-    user_row = get_user_row()
+    user_row = get_user_row(request)
     uid = user_row["id"]
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     local_hour = _user_local_hour(tz_name)
@@ -488,6 +720,7 @@ async def page_today(request: Request):
                         "task_id": t["id"],
                         "is_routine": bool(t.get("is_routine")),
                         "category_name": (t.get("category_name") or "").strip(),
+                        "color": (t.get("color") or "").strip().lower(),
                         "repeat_day": rd,
                         "repeat_day_codes": _repeat_day_codes(rd),
                         "repeat_interval": _repeat_interval_for_row(rd),
@@ -514,6 +747,7 @@ async def page_today(request: Request):
             empty=len(ordered_today) == 0,
             next_url="/today",
             category_choices=_category_choices(uid),
+            color_choices=TASK_COLOR_CHOICES,
             kebab_hide_schedule=True,
         ),
     )
@@ -521,11 +755,11 @@ async def page_today(request: Request):
 
 @app.get("/tasks", response_class=HTMLResponse)
 async def page_tasks(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     from bot_v2 import _active_tasks_display_order, _format_date_human, _format_time_human
 
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     _maybe_transfer_overdue(uid)
     tasks = _active_tasks_display_order(uid)
     numbered = list(enumerate(tasks, start=1))
@@ -553,6 +787,7 @@ async def page_tasks(request: Request):
             "date_right": date_right,
             "is_routine": bool(t.get("is_routine")),
             "category_name": (t.get("category_name") or "").strip(),
+            "color": (t.get("color") or "").strip().lower(),
             "repeat_day": rd,
             "repeat_day_codes": _repeat_day_codes(rd),
             "repeat_interval": _repeat_interval_for_row(rd),
@@ -613,17 +848,18 @@ async def page_tasks(request: Request):
             empty=len(tasks) == 0,
             next_url="/tasks",
             category_choices=_category_choices(uid),
+            color_choices=TASK_COLOR_CHOICES,
         ),
     )
 
 
 @app.get("/reports/today", response_class=HTMLResponse)
 async def page_report_today(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     from bot_v2 import _format_done_report_today
 
-    user_row = get_user_row()
+    user_row = get_user_row(request)
     uid = user_row["id"]
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     tasks = db.get_done_tasks_today(uid)
@@ -639,7 +875,7 @@ async def page_report_today(request: Request):
 
 @app.get("/help", response_class=HTMLResponse)
 async def page_help(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     return templates.TemplateResponse(
         request,
@@ -663,9 +899,9 @@ async def page_help(request: Request):
 
 @app.get("/projects", response_class=HTMLResponse)
 async def page_projects(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     raw = db.list_projects(uid)
     counts = db.count_active_tasks_by_project(uid)
     project_rows: list[dict] = []
@@ -688,16 +924,19 @@ async def page_projects(request: Request):
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
 async def page_project_detail(request: Request, project_id: int):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     proj = db.get_project(uid, project_id)
     if not proj:
         return RedirectResponse("/projects", status_code=302)
     from bot_v2 import _format_date_human, _format_time_human
 
     _maybe_transfer_overdue(uid)
-    tasks = db.get_active_tasks_for_project(uid, project_id)
+    sort = (request.query_params.get("sort") or "date").strip().lower()
+    if sort not in ("date", "color", "text"):
+        sort = "date"
+    tasks = db.get_active_tasks_for_project(uid, project_id, sort=sort)
     db.attach_project_labels(uid, tasks)
     rows: list[dict] = []
     for t in tasks:
@@ -716,6 +955,7 @@ async def page_project_detail(request: Request, project_id: int):
                 "date_right": date_right,
                 "is_routine": False,
                 "category_name": (t.get("category_name") or "").strip(),
+                "color": (t.get("color") or "").strip().lower(),
                 "repeat_day": "",
                 "repeat_day_codes": [],
                 "repeat_interval": "",
@@ -739,6 +979,8 @@ async def page_project_detail(request: Request, project_id: int):
             {"text": (t.get("text") or "").strip(), "done_label": done_label}
         )
     next_url = f"/projects/{project_id}"
+    if sort != "date":
+        next_url = f"/projects/{project_id}?sort={sort}"
     w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
     n_done_week = db.count_done_tasks_in_project_between(uid, project_id, w_start_utc, w_end_utc)
     n_done_all = db.count_done_tasks_in_project_all(uid, project_id)
@@ -752,6 +994,8 @@ async def page_project_detail(request: Request, project_id: int):
             empty=len(rows) == 0,
             done_rows=done_rows,
             next_url=next_url,
+            sort=sort,
+            color_choices=TASK_COLOR_CHOICES,
             category_choices=_category_choices(uid),
             project_stats={
                 "active": len(rows),
@@ -765,11 +1009,11 @@ async def page_project_detail(request: Request, project_id: int):
 
 @app.get("/routines", response_class=HTMLResponse)
 async def page_routines(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     from bot_v2 import _group_tasks_by_time_bucket
 
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     routine_tasks = db.get_routine_tasks(uid)
     if not routine_tasks:
         return templates.TemplateResponse(
@@ -839,9 +1083,9 @@ async def page_routines(request: Request):
 
 @app.get("/actions", response_class=HTMLResponse)
 async def page_actions(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     done = db.get_done_tasks_today(uid)
     done_items = [{"text": t.get("text", ""), "task_id": t["id"]} for t in done]
     return templates.TemplateResponse(
@@ -853,9 +1097,9 @@ async def page_actions(request: Request):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def page_settings(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     s = db.get_settings(uid)
     try:
         n = int(s.get("max_tasks_per_day") or 7)
@@ -871,9 +1115,9 @@ async def page_settings(request: Request):
 
 @app.post("/settings")
 async def action_settings(request: Request, max_tasks_per_day: str = Form("7")):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     try:
         n = int(max_tasks_per_day)
     except (TypeError, ValueError):
@@ -885,11 +1129,11 @@ async def action_settings(request: Request, max_tasks_per_day: str = Form("7")):
 
 @app.get("/reports/week", response_class=HTMLResponse)
 async def page_report_week(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     from bot_v2 import _format_done_report_week
 
-    user_row = get_user_row()
+    user_row = get_user_row(request)
     uid = user_row["id"]
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
@@ -913,11 +1157,11 @@ async def page_report_week(request: Request):
 
 @app.get("/reports/projects", response_class=HTMLResponse)
 async def page_reports_projects(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     from bot_v2 import _format_date_human
 
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     raw = db.list_projects(uid)
     counts = db.count_active_tasks_by_project(uid)
     w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
@@ -948,9 +1192,9 @@ async def page_reports_projects(request: Request):
 
 @app.post("/tasks/add")
 async def action_add(request: Request, text: str = Form("")):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    user_row = get_user_row()
+    user_row = get_user_row(request)
     result = add_task_from_text(user_row, text)
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
@@ -965,9 +1209,9 @@ async def action_add(request: Request, text: str = Form("")):
 async def action_project_create(
     request: Request, title: str = Form(""), emoji: str = Form("📁")
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     em = (emoji or "📁").strip() or "📁"
     row = db.create_project(uid, title, em)
     if row:
@@ -982,9 +1226,9 @@ async def action_project_update(
     title: str = Form(""),
     emoji: str = Form("📁"),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     dest = f"/projects/{project_id}"
     updated = db.update_project(uid, project_id, title.strip(), (emoji or "").strip())
     if updated:
@@ -996,9 +1240,9 @@ async def action_project_update(
 async def action_project_add_task(
     request: Request, project_id: int, text: str = Form("")
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    user_row = get_user_row()
+    user_row = get_user_row(request)
     result = add_project_task_from_text(user_row, project_id, text)
     dest = f"/projects/{project_id}"
     return _flash_redirect(request, dest, result["message"], result["ok"])
@@ -1006,9 +1250,9 @@ async def action_project_add_task(
 
 @app.post("/projects/{project_id}/delete")
 async def action_project_delete(request: Request, project_id: int):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     ok = db.delete_project(uid, project_id)
     msg = (
         "Проект удалён. Задачи остались в списке, но без привязки к проекту."
@@ -1020,7 +1264,7 @@ async def action_project_delete(request: Request, project_id: int):
 
 @app.post("/tasks/complete")
 async def action_complete(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     form = await request.form()
     raw = form.getlist("task_id")
@@ -1030,7 +1274,7 @@ async def action_complete(request: Request):
             ids.append(int(x))
         except (TypeError, ValueError):
             pass
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
     flash_dest = _flash_allowed(path)
@@ -1062,9 +1306,9 @@ async def action_complete(request: Request):
 
 @app.post("/tasks/delete")
 async def action_delete(request: Request, num: int = Form(...), kind: str = Form("task")):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     is_routine = kind.strip().lower() == "routine"
     result = delete_task_by_number(uid, num, is_routine)
     dest = request.query_params.get("next", "/actions")
@@ -1073,9 +1317,9 @@ async def action_delete(request: Request, num: int = Form(...), kind: str = Form
 
 @app.post("/tasks/edit")
 async def action_edit(request: Request, phrase: str = Form("")):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = apply_edit_phrase(uid, phrase)
     dest = request.query_params.get("next", "/actions")
     return _flash_redirect(request, dest, result["message"], result["ok"])
@@ -1083,9 +1327,9 @@ async def action_edit(request: Request, phrase: str = Form("")):
 
 @app.post("/tasks/reschedule")
 async def action_reschedule(request: Request, phrase: str = Form("")):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = apply_reschedule_phrase(uid, phrase)
     dest = request.query_params.get("next", "/actions")
     return _flash_redirect(request, dest, result["message"], result["ok"])
@@ -1093,9 +1337,9 @@ async def action_reschedule(request: Request, phrase: str = Form("")):
 
 @app.post("/tasks/uncomplete")
 async def action_uncomplete(request: Request, task_id: int = Form(...)):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = uncomplete_done_today_by_id(uid, task_id)
     dest = request.query_params.get("next", "/actions")
     return _flash_redirect(request, dest, result["message"], result["ok"])
@@ -1111,11 +1355,11 @@ async def action_delete_id(
     task_id: int = Form(...),
     next: str = Form("/today"),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = delete_task_by_id(uid, task_id)
     if _wants_json(request):
         return JSONResponse(result)
@@ -1128,11 +1372,11 @@ async def action_routine_snooze_today(
     task_id: int = Form(...),
     next: str = Form("/today"),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = routine_snooze_from_today_plan(uid, task_id)
     if _wants_json(request):
         return JSONResponse(result)
@@ -1146,11 +1390,11 @@ async def action_update_text(
     text: str = Form(""),
     next: str = Form("/today"),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = update_task_text_by_id(uid, task_id, text)
     if _wants_json(request):
         return JSONResponse(result)
@@ -1165,11 +1409,11 @@ async def action_reschedule_id(
     due_date: str = Form(""),
     preset: str = Form(""),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     preset = (preset or "").strip()
     due = (due_date or "").strip()
     if preset == "nodate":
@@ -1204,11 +1448,11 @@ async def action_drag_move(
     section_kind: str = Form(""),
     section_date: str = Form(""),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     mode = (mode or "").strip().lower()
     if mode == "today_bucket":
         result = set_task_time_bucket_by_id(uid, task_id, bucket)
@@ -1229,12 +1473,32 @@ async def action_set_category(
     next: str = Form("/tasks"),
     category_name: str = Form(""),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = set_task_category_by_id(uid, task_id, category_name)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/set_color")
+async def action_set_color(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/tasks"),
+    color: str = Form(""),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse(
+                {"ok": False, "message": "Требуется вход."}, status_code=401
+            )
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = set_task_color_by_id(uid, task_id, color)
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])
@@ -1247,11 +1511,11 @@ async def action_set_repeat_day(
     next: str = Form("/routines"),
     repeat_day: str = Form(""),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     result = set_task_repeat_day_by_id(uid, task_id, repeat_day)
     if _wants_json(request):
         return JSONResponse(result)
@@ -1265,11 +1529,11 @@ async def action_set_routine_kind(
     next: str = Form("/tasks"),
     make_routine: str = Form("0"),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     flag = (make_routine or "").strip().lower() in ("1", "true", "yes", "on")
     result = set_task_routine_kind_by_id(uid, task_id, flag)
     if _wants_json(request):
@@ -1279,9 +1543,9 @@ async def action_set_routine_kind(
 
 @app.get("/categories", response_class=HTMLResponse)
 async def page_categories(request: Request):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     return templates.TemplateResponse(
         request,
         "categories.html",
@@ -1297,9 +1561,9 @@ async def categories_save_row(
     name: str = Form(""),
     keywords_text: str = Form(""),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     name = (name or "").strip()
     if not name:
         return _flash_redirect(request, "/categories", "Название не может быть пустым.", False)
@@ -1326,9 +1590,9 @@ async def categories_add(
     name: str = Form(""),
     keywords_text: str = Form(""),
 ):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     name = (name or "").strip()
     if not name:
         return _flash_redirect(request, "/categories", "Укажи название категории.", False)
@@ -1341,9 +1605,9 @@ async def categories_add(
 
 @app.post("/categories/delete")
 async def categories_delete(request: Request, category_id: int = Form(...)):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
-    uid = get_user_row()["id"]
+    uid = get_user_row(request)["id"]
     ok = db.delete_category_row(uid, category_id)
     return _flash_redirect(
         request,
@@ -1362,7 +1626,7 @@ def _category_name_exists(uid: int, name: str) -> bool:
 
 @app.post("/tasks/voice")
 async def action_voice(request: Request, file: UploadFile = File(...)):
-    if not request.session.get("auth"):
+    if not _is_authenticated(request):
         if "application/json" in (request.headers.get("accept") or ""):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
@@ -1373,6 +1637,12 @@ async def action_voice(request: Request, file: UploadFile = File(...)):
         if wants_json:
             return JSONResponse({"ok": False, "message": "Пустой файл."})
         return _flash_redirect(request, dest, "Пустой файл.", False)
+    max_voice_bytes = int(os.environ.get("WEB_MAX_VOICE_BYTES", str(5 * 1024 * 1024)))
+    if len(body) > max_voice_bytes:
+        msg = "Файл слишком большой. Максимум 5 МБ."
+        if wants_json:
+            return JSONResponse({"ok": False, "message": msg}, status_code=413)
+        return _flash_redirect(request, dest, msg, False)
     raw_name = file.filename or ""
     suf = Path(raw_name).suffix.lower()
     if suf not in (".ogg", ".oga", ".webm", ".wav", ".mp3", ".m4a", ".mp4"):
@@ -1383,7 +1653,7 @@ async def action_voice(request: Request, file: UploadFile = File(...)):
         if wants_json:
             return JSONResponse({"ok": False, "message": msg})
         return _flash_redirect(request, dest, msg, False)
-    user_row = get_user_row()
+    user_row = get_user_row(request)
     result = add_task_from_text(user_row, text)
     if wants_json:
         return JSONResponse(

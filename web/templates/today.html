@@ -22,7 +22,7 @@
     {% endif %}
     <ul class="task-list task-list--compact task-list--dropzone">
       {% for row in sec.rows %}
-      <li class="task-line drag-enabled" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
+      <li class="task-line drag-enabled{% if row.color %} has-color color-{{ row.color }}{% endif %}" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
         <div class="task-line-row">
           <input class="task-cb" type="checkbox" name="task_id" value="{{ row.task_id }}" id="cb{{ row.task_id }}" form="form-complete-today" draggable="false">
           <label class="task-num-emoji" for="cb{{ row.task_id }}" draggable="false">

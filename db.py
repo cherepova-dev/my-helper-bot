@@ -34,21 +34,16 @@ _SQLITE_PATH = os.environ.get("BOT_DB_PATH", "bot_data.db")
 # ── Подключение ─────────────────────────────────────────────────────────
 
 def _get_conn():
+    """
+    Возвращает PG/SQLite-подключение. Для PG соединение ленивое — мы НЕ
+    пингуем его на каждый вызов (это +1 SQL на каждое обращение к БД).
+    Если соединение оборвалось, переподключаемся при следующей реальной
+    операции (см. _fetchone/_fetchall/_execute — они ловят исключение
+    и пробуют ещё раз).
+    """
     global _conn
     if USE_PG:
-        need_new = _conn is None
-        if not need_new:
-            try:
-                need_new = _conn.closed != 0
-                if not need_new:
-                    _conn.cursor().execute("SELECT 1")
-            except Exception:
-                need_new = True
-                try:
-                    _conn.close()
-                except Exception:
-                    pass
-        if need_new:
+        if _conn is None or getattr(_conn, "closed", 0) != 0:
             _conn = psycopg2.connect(DATABASE_URL, sslmode="require")
             _conn.autocommit = True
             _init_tables_pg()
@@ -163,6 +158,19 @@ def _init_tables_pg() -> None:
         "ALTER TABLE tasks ADD COLUMN last_completed_at TIMESTAMPTZ",
         "ALTER TABLE categories ADD COLUMN keywords TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
+        "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
+        "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
+        "ALTER TABLE users ALTER COLUMN telegram_id DROP NOT NULL",
+        "ALTER TABLE users ADD COLUMN email TEXT",
+        "ALTER TABLE users ADD COLUMN password_hash TEXT",
+        "ALTER TABLE users ADD COLUMN password_algo TEXT DEFAULT 'argon2'",
+        "ALTER TABLE users ADD COLUMN password_reset_token_hash TEXT",
+        "ALTER TABLE users ADD COLUMN password_reset_expires_at TIMESTAMPTZ",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower "
+        "ON users (lower(email)) WHERE email IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_proj_color "
+        "ON tasks(user_id, project_id, color, color_sort, due_date) "
+        "WHERE status = 'active'",
     ):
         try:
             cur.execute(col_sql)
@@ -176,7 +184,7 @@ def _init_tables_sqlite() -> None:
     _conn.executescript("""
     CREATE TABLE IF NOT EXISTS users (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        telegram_id     INTEGER UNIQUE NOT NULL,
+        telegram_id     INTEGER UNIQUE,
         name            TEXT DEFAULT '',
         timezone        TEXT DEFAULT 'Europe/Moscow',
         tips_shown      INTEGER DEFAULT 0,
@@ -242,6 +250,18 @@ def _init_tables_sqlite() -> None:
         "ALTER TABLE tasks ADD COLUMN last_completed_at TEXT",
         "ALTER TABLE categories ADD COLUMN keywords TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id)",
+        "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
+        "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN email TEXT",
+        "ALTER TABLE users ADD COLUMN password_hash TEXT",
+        "ALTER TABLE users ADD COLUMN password_algo TEXT DEFAULT 'argon2'",
+        "ALTER TABLE users ADD COLUMN password_reset_token_hash TEXT",
+        "ALTER TABLE users ADD COLUMN password_reset_expires_at TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower "
+        "ON users (lower(email)) WHERE email IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_tasks_proj_color "
+        "ON tasks(user_id, project_id, color, color_sort, due_date) "
+        "WHERE status = 'active'",
     ):
         try:
             _conn.execute(col_sql)
@@ -264,47 +284,88 @@ def _query(sql: str) -> str:
     return sql
 
 
+def _drop_conn() -> None:
+    """Помечает PG-соединение как невалидное, чтобы _get_conn() переподключился."""
+    global _conn
+    if _conn is not None:
+        try:
+            _conn.close()
+        except Exception:
+            pass
+        _conn = None
+
+
+def _is_pg_connection_error(exc: Exception) -> bool:
+    if not USE_PG:
+        return False
+    return isinstance(
+        exc, (psycopg2.OperationalError, psycopg2.InterfaceError)
+    )
+
+
 def _fetchone(sql: str, params: tuple = ()) -> dict | None:
-    conn = _get_conn()
-    sql = _query(sql)
-    if USE_PG:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(sql, params)
-        row = cur.fetchone()
-        cur.close()
-        return dict(row) if row else None
-    else:
-        row = conn.execute(sql, params).fetchone()
-        return dict(row) if row else None
+    sql_q = _query(sql)
+    for attempt in (0, 1):
+        conn = _get_conn()
+        try:
+            if USE_PG:
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cur.execute(sql_q, params)
+                row = cur.fetchone()
+                cur.close()
+                return dict(row) if row else None
+            else:
+                row = conn.execute(sql_q, params).fetchone()
+                return dict(row) if row else None
+        except Exception as exc:
+            if attempt == 0 and _is_pg_connection_error(exc):
+                _drop_conn()
+                continue
+            raise
 
 
 def _fetchall(sql: str, params: tuple = ()) -> list[dict]:
-    conn = _get_conn()
-    sql = _query(sql)
-    if USE_PG:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        cur.close()
-        return [dict(r) for r in rows]
-    else:
-        rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+    sql_q = _query(sql)
+    for attempt in (0, 1):
+        conn = _get_conn()
+        try:
+            if USE_PG:
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cur.execute(sql_q, params)
+                rows = cur.fetchall()
+                cur.close()
+                return [dict(r) for r in rows]
+            else:
+                rows = conn.execute(sql_q, params).fetchall()
+                return [dict(r) for r in rows]
+        except Exception as exc:
+            if attempt == 0 and _is_pg_connection_error(exc):
+                _drop_conn()
+                continue
+            raise
 
 
 def _execute(sql: str, params: tuple = ()) -> int:
-    conn = _get_conn()
-    sql = _query(sql)
-    if USE_PG:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        n = cur.rowcount
-        cur.close()
-        return n
-    else:
-        n = conn.execute(sql, params).rowcount
-        conn.commit()
-        return n
+    sql_q = _query(sql)
+    for attempt in (0, 1):
+        conn = _get_conn()
+        try:
+            if USE_PG:
+                cur = conn.cursor()
+                cur.execute(sql_q, params)
+                n = cur.rowcount
+                cur.close()
+                return n
+            else:
+                n = conn.execute(sql_q, params).rowcount
+                conn.commit()
+                return n
+        except Exception as exc:
+            if attempt == 0 and _is_pg_connection_error(exc):
+                _drop_conn()
+                continue
+            raise
+    return 0
 
 
 def _insert_returning(sql: str, params: tuple = ()) -> dict | None:
@@ -394,6 +455,97 @@ def count_users() -> int:
 def list_user_ids() -> list[int]:
     rows = _fetchall("SELECT id FROM users ORDER BY id")
     return [int(r["id"]) for r in rows]
+
+
+# ── Email/пароль auth ───────────────────────────────────────────────────
+
+def find_user_by_email(email: str) -> dict | None:
+    """Поиск пользователя по email (без учёта регистра)."""
+    if not email:
+        return None
+    return _fetchone(
+        "SELECT * FROM users WHERE lower(email) = lower(%s) LIMIT 1",
+        (email.strip(),),
+    )
+
+
+def _next_synthetic_telegram_id() -> int:
+    """
+    Для случаев, когда колонка telegram_id осталась NOT NULL (старые SQLite-файлы).
+    Используем уникальные отрицательные значения, чтобы не пересечься с реальными tg id.
+    """
+    row = _fetchone("SELECT MIN(telegram_id) AS m FROM users")
+    cur_min = (row or {}).get("m")
+    try:
+        cur_min_i = int(cur_min) if cur_min is not None else 0
+    except (TypeError, ValueError):
+        cur_min_i = 0
+    nxt = (cur_min_i - 1) if cur_min_i < 0 else -1
+    return nxt
+
+
+def create_user_with_email(email: str, password_hash: str, name: str = "") -> dict:
+    """
+    Создаёт нового пользователя с email и хешем пароля.
+    telegram_id остаётся NULL (после миграции в PG это разрешено).
+    Сидит дефолтные категории как и обычная регистрация.
+    """
+    email_norm = email.strip()
+    name_norm = (name or "").strip()
+
+    if USE_PG:
+        sql = (
+            "INSERT INTO users (telegram_id, name, email, password_hash, password_algo) "
+            "VALUES (NULL, %s, %s, %s, 'argon2') RETURNING *"
+        )
+        cur = _get_conn().cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql, (name_norm, email_norm, password_hash))
+        row = cur.fetchone()
+        cur.close()
+        user = dict(row) if row else None
+    else:
+        # SQLite: пробуем NULL, если ограничение не позволяет — синтетический id.
+        try:
+            cur = _get_conn().execute(
+                "INSERT INTO users (telegram_id, name, email, password_hash, password_algo) "
+                "VALUES (NULL, ?, ?, ?, 'argon2')",
+                (name_norm, email_norm, password_hash),
+            )
+            _get_conn().commit()
+            new_id = cur.lastrowid
+        except sqlite3.IntegrityError:
+            tg = _next_synthetic_telegram_id()
+            cur = _get_conn().execute(
+                "INSERT INTO users (telegram_id, name, email, password_hash, password_algo) "
+                "VALUES (?, ?, ?, ?, 'argon2')",
+                (tg, name_norm, email_norm, password_hash),
+            )
+            _get_conn().commit()
+            new_id = cur.lastrowid
+        user = _fetchone("SELECT * FROM users WHERE id = %s", (new_id,))
+
+    if not user:
+        raise RuntimeError("Не удалось создать пользователя")
+
+    user_id = user["id"]
+    existing = _fetchone(
+        "SELECT COUNT(*) AS cnt FROM categories WHERE user_id = %s", (user_id,)
+    )
+    if existing and existing["cnt"] == 0:
+        for i, (emoji, cat_name) in enumerate(DEFAULT_CATEGORIES):
+            _execute(
+                "INSERT INTO categories (user_id, emoji, name, sort_order) "
+                "VALUES (%s, %s, %s, %s)",
+                (user_id, emoji, cat_name, i),
+            )
+    return user
+
+
+def set_password_hash(user_id: int, password_hash: str) -> None:
+    _execute(
+        "UPDATE users SET password_hash = %s, password_algo = 'argon2' WHERE id = %s",
+        (password_hash, user_id),
+    )
 
 
 def increment_tips(telegram_id: int) -> int:
@@ -626,17 +778,83 @@ def count_active_routines(user_id: int) -> int:
     return int(row["c"]) if row and row.get("c") is not None else 0
 
 
+def home_counts(user_id: int) -> dict[str, int]:
+    """
+    Один запрос на главную: возвращает дешёвые счётчики для дашборда.
+    n_tasks — все активные, n_routines — активные рутины. count_active_tasks
+    уже включает рутины, как и в исходной логике.
+    """
+    row = _fetchone(
+        "SELECT "
+        "  COUNT(*) FILTER (WHERE status = 'active') AS n_tasks, "
+        "  COUNT(*) FILTER (WHERE status = 'active' AND is_routine = TRUE) AS n_routines "
+        "FROM tasks WHERE user_id = %s",
+        (user_id,),
+    ) if USE_PG else None
+    if row is None:
+        # SQLite не поддерживает FILTER (WHERE …), используем CASE.
+        row = _fetchone(
+            "SELECT "
+            "  SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS n_tasks, "
+            "  SUM(CASE WHEN status = 'active' AND is_routine = 1 THEN 1 ELSE 0 END) AS n_routines "
+            "FROM tasks WHERE user_id = %s",
+            (user_id,),
+        )
+    return {
+        "n_tasks": int((row or {}).get("n_tasks") or 0),
+        "n_routines": int((row or {}).get("n_routines") or 0),
+    }
+
+
 def count_user_projects(user_id: int) -> int:
     row = _fetchone("SELECT COUNT(*) AS c FROM projects WHERE user_id = %s", (user_id,))
     return int(row["c"]) if row and row.get("c") is not None else 0
 
 
-def get_active_tasks_for_project(user_id: int, project_id: int) -> list[dict]:
+VALID_TASK_COLORS = ("", "red", "orange", "yellow", "green", "blue", "purple", "gray")
+
+
+def get_active_tasks_for_project(
+    user_id: int, project_id: int, sort: str = "date"
+) -> list[dict]:
+    """
+    Возвращает активные задачи проекта.
+    sort:
+      - "date" (по умолчанию): срок → время → id;
+      - "color": задачи без цвета в конце, цветные сгруппированы и отсортированы по color_sort;
+      - "text": по тексту задачи (без учёта регистра).
+    """
+    s = (sort or "date").strip().lower()
+    if s == "color":
+        order = (
+            "(COALESCE(color, '') = '') ASC, COALESCE(color, ''), "
+            "COALESCE(color_sort, 0), "
+            "COALESCE(CAST(due_date AS TEXT), '9999-12-31'), id"
+        )
+    elif s == "text":
+        order = "lower(text), id"
+    else:
+        order = (
+            "COALESCE(CAST(due_date AS TEXT), '9999-12-31'), "
+            "COALESCE(CAST(due_time AS TEXT), ''), id"
+        )
     return _fetchall(
-        "SELECT * FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'active' "
-        "ORDER BY COALESCE(CAST(due_date AS TEXT), '9999-12-31'), COALESCE(CAST(due_time AS TEXT), ''), id",
+        f"SELECT * FROM tasks WHERE user_id = %s AND project_id = %s "
+        f"AND status = 'active' ORDER BY {order}",
         (user_id, project_id),
     )
+
+
+def set_task_color(user_id: int, task_id: int, color: str) -> bool:
+    """Устанавливает цвет задачи. Допустимые значения см. VALID_TASK_COLORS."""
+    c = (color or "").strip().lower()
+    if c not in VALID_TASK_COLORS:
+        return False
+    n = _execute(
+        "UPDATE tasks SET color = %s WHERE id = %s AND user_id = %s",
+        (c, task_id, user_id),
+    )
+    return n > 0
 
 
 def get_done_tasks_for_project(user_id: int, project_id: int, limit: int = 80) -> list[dict]:
@@ -841,12 +1059,43 @@ def find_tasks_matching_text(user_id: int, search: str) -> list[dict]:
     return []
 
 
-def _get_today_in_user_tz(user_id: int) -> tuple[str, int]:
-    """Возвращает (дата YYYY-MM-DD в часовом поясе пользователя, weekday 0=пн..6=вс)."""
+# Маленький TTL-кеш timezone пользователя: нужная функциональность вызывается
+# очень часто на каждой странице (get_today_tasks, окно «сегодня», транзит
+# просроченных и т.д.) и каждый раз делала отдельный SELECT — это лишние
+# round-trip к БД. TTL 60 секунд достаточно: смена tz пользователем — редкий
+# случай, повторных гонок с задачами нет.
+import time as _time
+
+_TZ_CACHE_TTL_SEC = 60.0
+_tz_cache: dict[int, tuple[float, str]] = {}
+
+
+def _get_user_timezone(user_id: int) -> str:
+    now = _time.monotonic()
+    cached = _tz_cache.get(user_id)
+    if cached and now - cached[0] < _TZ_CACHE_TTL_SEC:
+        return cached[1]
     row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
     tz_name = "Europe/Moscow"
     if row and row.get("timezone"):
         tz_name = (row["timezone"] or "").strip() or tz_name
+    _tz_cache[user_id] = (now, tz_name)
+    if len(_tz_cache) > 5000:
+        _tz_cache.clear()
+        _tz_cache[user_id] = (now, tz_name)
+    return tz_name
+
+
+def _invalidate_user_timezone_cache(user_id: int | None = None) -> None:
+    if user_id is None:
+        _tz_cache.clear()
+    else:
+        _tz_cache.pop(user_id, None)
+
+
+def _get_today_in_user_tz(user_id: int) -> tuple[str, int]:
+    """Возвращает (дата YYYY-MM-DD в часовом поясе пользователя, weekday 0=пн..6=вс)."""
+    tz_name = _get_user_timezone(user_id)
     if ZoneInfo is not None:
         try:
             tz = ZoneInfo(tz_name)
@@ -869,8 +1118,7 @@ def user_local_date_offset(user_id: int, days: int) -> str:
 
 def _local_date_start_utc(user_id: int, date_str: str) -> str:
     """Полночь даты YYYY-MM-DD в TZ пользователя → UTC ISO."""
-    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
-    tz_name = (row.get("timezone") or "Europe/Moscow").strip() if row else "Europe/Moscow"
+    tz_name = _get_user_timezone(user_id)
     y, m, d = map(int, date_str.split("-"))
     if ZoneInfo is not None:
         try:
@@ -899,8 +1147,7 @@ def user_calendar_week_bounds_utc(user_id: int) -> tuple[str, str, str, str]:
 def _user_today_window_utc(user_id: int) -> tuple[str, str]:
     """Начало и конец «сегодня» пользователя в UTC (ISO), для отчётов и счётчиков."""
     today_str, _ = _get_today_in_user_tz(user_id)
-    row = _fetchone("SELECT timezone FROM users WHERE id = %s", (user_id,))
-    tz_name = (row.get("timezone") or "Europe/Moscow").strip() if row else "Europe/Moscow"
+    tz_name = _get_user_timezone(user_id)
     if ZoneInfo is not None:
         try:
             tz = ZoneInfo(tz_name)
@@ -1185,13 +1432,29 @@ def find_task_by_text(user_id: int, search: str) -> dict | None:
     search_lower = search.lower().strip()
     if not search_lower:
         return None
+    # Точное вхождение фразы — пытаемся срезать в БД (одна задача, не загружая все).
+    pattern = f"%{search_lower}%"
+    if USE_PG:
+        row = _fetchone(
+            "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+            "AND text ILIKE %s ORDER BY id LIMIT 1",
+            (user_id, pattern),
+        )
+    else:
+        row = _fetchone(
+            "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+            "AND lower(text) LIKE %s ORDER BY id LIMIT 1",
+            (user_id, pattern),
+        )
+    if row:
+        return row
+    # Fallback: все слова входят в текст (для перестановки и опечаток оставим
+    # старую, чуть более «умную» эвристику; на длинных списках выгрузка всё
+    # ещё дешевле, чем ничего не вернуть).
     tasks = get_active_tasks(user_id)
+    words = search_lower.split()
     for t in tasks:
-        if search_lower in t["text"].lower():
-            return t
-    for t in tasks:
-        words = search_lower.split()
-        if all(w in t["text"].lower() for w in words):
+        if all(w in (t.get("text") or "").lower() for w in words):
             return t
     return None
 

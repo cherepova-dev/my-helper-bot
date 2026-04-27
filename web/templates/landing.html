@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Помощник — задачи без перегруза</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="landing-page">
+  <header class="landing-header">
+    <a href="/" class="brand">Помощник</a>
+    <nav class="landing-nav">
+      <a href="/login" class="link-muted">Войти</a>
+      <a href="/signup" class="btn-primary">Создать аккаунт</a>
+    </nav>
+  </header>
+
+  <main class="landing-main">
+    <section class="hero">
+      <h1>Личный помощник, который не давит и не теряет дела.</h1>
+      <p class="hero-lead">
+        Записывайте задачи как мысли — короткой фразой или голосом.
+        Помощник сам разложит их по дням, временам суток и проектам.
+        Никаких сложных меню, никакого чувства вины за «много невыполненного».
+      </p>
+      <div class="hero-cta">
+        <a href="/signup" class="btn-primary btn-lg">Начать бесплатно</a>
+        <a href="/login" class="btn-secondary btn-lg">У меня уже есть аккаунт</a>
+      </div>
+      <p class="hero-trust">
+        Регистрация занимает 30 секунд. Email-подтверждения и платные тарифы — позже.
+      </p>
+    </section>
+
+    <section class="benefits">
+      <div class="benefit">
+        <h3>{{ job_1_title }}</h3>
+        <p class="benefit-short">{{ job_1_short }}</p>
+        <p class="benefit-how">{{ job_1_how }}</p>
+      </div>
+      <div class="benefit">
+        <h3>{{ job_2_title }}</h3>
+        <p class="benefit-short">{{ job_2_short }}</p>
+        <p class="benefit-how">{{ job_2_how }}</p>
+      </div>
+      <div class="benefit">
+        <h3>{{ job_3_title }}</h3>
+        <p class="benefit-short">{{ job_3_short }}</p>
+        <p class="benefit-how">{{ job_3_how }}</p>
+      </div>
+    </section>
+
+    <section class="how-it-works">
+      <h2>Как это работает</h2>
+      <ol class="steps">
+        <li><strong>Запишите задачу как мысль.</strong> «Завтра в 10 врач», «купить молоко на выходных», «йога 3 раза в неделю».</li>
+        <li><strong>Помощник разложит сам.</strong> Дата, время, категория, рутина — без ручной разметки.</li>
+        <li><strong>Смотрите «Сегодня».</strong> Утро / день / вечер. Только то, что важно сейчас.</li>
+        <li><strong>Цвета и проекты.</strong> Группируйте задачи по цветам (срочно, личное, идеи) и проектам.</li>
+      </ol>
+    </section>
+
+    <section class="cta-final">
+      <h2>Попробуйте — это бесплатно</h2>
+      <p>Хватит держать дела в голове. Запишите первое и посмотрите, что получится.</p>
+      <a href="/signup" class="btn-primary btn-lg">Создать аккаунт</a>
+    </section>
+  </main>
+
+  <footer class="landing-footer">
+    <span>© Помощник</span>
+    {% set _sup = support_contact() %}
+    {% if _sup %}
+    <a href="{{ _sup }}" class="link-muted">Поддержка</a>
+    {% endif %}
+  </footer>
+</body>
+</html>

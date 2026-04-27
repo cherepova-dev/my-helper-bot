@@ -56,6 +56,7 @@ def transcribe_voice(voice_bytes: bytes, suffix: str = ".ogg") -> str | None:
                 model=WHISPER_MODEL,
                 file=audio_file,
                 language="ru",
+                timeout=20.0,
             )
         text = transcription.text.strip()
         if text:
@@ -397,6 +398,7 @@ def process_message(
             messages=messages,
             temperature=0.3,
             max_tokens=2048,
+            timeout=20.0,
         )
         raw = response.choices[0].message.content.strip()
         raw = _clean_json(raw)
