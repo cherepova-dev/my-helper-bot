@@ -9,9 +9,11 @@
     <div class="task-kebab-panel-body">
     <div class="task-menu-row-move" role="group" aria-label="Перенос срока">
       <span class="task-menu-label">Перенос срока</span>
-      <button type="button" class="task-menu-item" data-action="today">Сегодня</button>
-      <button type="button" class="task-menu-item" data-action="tomorrow">Завтра</button>
-      <button type="button" class="task-menu-item" data-action="plus2">Послезавтра</button>
+      <div class="task-reschedule-quick" role="group" aria-label="Быстрый перенос">
+        <button type="button" class="task-menu-chip task-menu-chip--compact" data-action="today">Сегодня</button>
+        <button type="button" class="task-menu-chip task-menu-chip--compact" data-action="tomorrow">Завтра</button>
+        <button type="button" class="task-menu-chip task-menu-chip--compact" data-action="plus2">Послезавтра</button>
+      </div>
       <div class="task-menu-date-block">
         <label class="task-menu-label" for="task-date-{{ row.task_id }}">Своя дата</label>
         <div class="task-menu-date-row">
@@ -32,6 +34,24 @@
         <button type="button" class="task-menu-chip task-menu-chip--muted" data-action="time-bucket" data-bucket="none">Снять</button>
       </div>
     </div>
+    {% if row.show_move_today | default(false) %}
+    <div class="task-menu-row-move-order" role="group" aria-label="Порядок в блоке дня">
+      <span class="task-menu-label">Порядок</span>
+      <div class="task-move-order-row">
+        <button type="button" class="task-menu-chip" data-action="move-up-today" {% if not row.can_move_up_today %}disabled{% endif %} aria-label="Выше">↑ Выше</button>
+        <button type="button" class="task-menu-chip" data-action="move-down-today" {% if not row.can_move_down_today %}disabled{% endif %} aria-label="Ниже">↓ Ниже</button>
+      </div>
+    </div>
+    {% endif %}
+    {% if row.show_move %}
+    <div class="task-menu-row-move-order" role="group" aria-label="Порядок в проекте">
+      <span class="task-menu-label">Порядок в проекте</span>
+      <div class="task-move-order-row">
+        <button type="button" class="task-menu-chip" data-action="move-up" {% if not row.can_move_up %}disabled{% endif %} aria-label="Переместить выше">↑ Выше</button>
+        <button type="button" class="task-menu-chip" data-action="move-down" {% if not row.can_move_down %}disabled{% endif %} aria-label="Переместить ниже">↓ Ниже</button>
+      </div>
+    </div>
+    {% endif %}
     {% if row.kebab_remove_from_plan %}
     <button type="button" class="task-menu-item" data-action="routine-snooze-today">Убрать из плана на сегодня</button>
     {% else %}
@@ -48,6 +68,7 @@
     {% set rdc = row.repeat_day_codes if row.repeat_day_codes is defined else [] %}
     <div class="routine-repeat-box" data-task-id="{{ row.task_id }}">
       <span class="task-menu-label">Расписание</span>
+      <p class="routine-repeat-hint muted">Изменения сохраняются сами; можно нажать «Применить» в конце блока.</p>
       <label class="routine-daily-row">
         <input type="checkbox" class="routine-dow-cb routine-daily-cb" value="ежедневно" {% if rd == 'ежедневно' %}checked{% endif %} draggable="false">
         Ежедневно
@@ -62,7 +83,7 @@
       </div>
       <label class="task-menu-label" for="rint-{{ row.task_id }}">Каждые N дней</label>
       <input type="number" id="rint-{{ row.task_id }}" class="routine-interval-input" min="2" max="365" step="1" placeholder="Пусто — по дням недели" value="{{ row.repeat_interval or '' }}" aria-label="Интервал в днях" draggable="false">
-      <button type="button" class="task-menu-item routine-repeat-save" data-action="save-repeat-days">Сохранить расписание</button>
+      <button type="button" class="btn-primary routine-repeat-save routine-repeat-save--full" data-action="save-repeat-days">Применить расписание</button>
     </div>
     {% endif %}
     {% if category_choices is defined %}
@@ -104,24 +125,6 @@
         {% endfor %}
       </div>
     </div>
-    {% if row.show_move_today | default(false) %}
-    <div class="task-menu-row-move-order" role="group" aria-label="Порядок в блоке дня">
-      <span class="task-menu-label">Порядок</span>
-      <div class="task-move-order-row">
-        <button type="button" class="task-menu-chip" data-action="move-up-today" {% if not row.can_move_up_today %}disabled{% endif %} aria-label="Выше">↑ Выше</button>
-        <button type="button" class="task-menu-chip" data-action="move-down-today" {% if not row.can_move_down_today %}disabled{% endif %} aria-label="Ниже">↓ Ниже</button>
-      </div>
-    </div>
-    {% endif %}
-    {% if row.show_move %}
-    <div class="task-menu-row-move-order" role="group" aria-label="Порядок в проекте">
-      <span class="task-menu-label">Порядок в проекте</span>
-      <div class="task-move-order-row">
-        <button type="button" class="task-menu-chip" data-action="move-up" {% if not row.can_move_up %}disabled{% endif %} aria-label="Переместить выше">↑ Выше</button>
-        <button type="button" class="task-menu-chip" data-action="move-down" {% if not row.can_move_down %}disabled{% endif %} aria-label="Переместить ниже">↓ Ниже</button>
-      </div>
-    </div>
-    {% endif %}
     </div>
   </div>
 </details>

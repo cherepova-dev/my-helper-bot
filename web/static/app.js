@@ -187,6 +187,8 @@
   }
 
   function initTaskRows() {
+    var routineSaveTimers = {};
+
     function taskFd(line) {
       var fd = new FormData();
       fd.append("task_id", line.dataset.taskId);
@@ -197,6 +199,124 @@
     function closeKebab(line) {
       var det = line.querySelector(".task-kebab");
       if (det) det.removeAttribute("open");
+    }
+
+    function syncReorderButtonsForUl(ul) {
+      if (!ul) return;
+      var items = ul.querySelectorAll(":scope > .task-line");
+      var n = items.length;
+      for (var i = 0; i < n; i++) {
+        var li = items[i];
+        var ut = li.querySelector('[data-action="move-up-today"]');
+        var dt = li.querySelector('[data-action="move-down-today"]');
+        if (ut) ut.disabled = i <= 0;
+        if (dt) dt.disabled = i >= n - 1;
+        var up = li.querySelector('[data-action="move-up"]');
+        var dn = li.querySelector('[data-action="move-down"]');
+        if (up) up.disabled = i <= 0;
+        if (dn) dn.disabled = i >= n - 1;
+      }
+    }
+
+    function optimisticLineReorder(line, url, dir) {
+      var ul = line.parentElement;
+      if (!ul || (ul.tagName !== "UL" && ul.tagName !== "OL")) return false;
+      var items = Array.prototype.slice.call(ul.querySelectorAll(":scope > .task-line"));
+      var idx = items.indexOf(line);
+      if (idx < 0) return false;
+      var neighbor;
+      if (dir === "up") {
+        if (idx === 0) return false;
+        neighbor = items[idx - 1];
+        ul.insertBefore(line, neighbor);
+      } else {
+        if (idx >= items.length - 1) return false;
+        neighbor = items[idx + 1];
+        ul.insertBefore(neighbor, line);
+      }
+      var fd = taskFd(line);
+      fd.append("direction", dir === "up" ? "up" : "down");
+      syncReorderButtonsForUl(ul);
+      closeKebab(line);
+      postTaskAction(url, fd)
+        .then(function (data) {
+          if (!data.ok) {
+            if (dir === "up") ul.insertBefore(neighbor, line);
+            else ul.insertBefore(line, neighbor);
+            syncReorderButtonsForUl(ul);
+            window.alert(data.message || "Не удалось");
+          }
+        })
+        .catch(function (err) {
+          if (dir === "up") ul.insertBefore(neighbor, line);
+          else ul.insertBefore(line, neighbor);
+          syncReorderButtonsForUl(ul);
+          window.alert(err.message || "Ошибка сети");
+        });
+      return true;
+    }
+
+    function submitRoutineRepeatFromBox(line, opts) {
+      opts = opts || {};
+      var silentEmpty = opts.silentEmpty;
+      var box = line.querySelector(".routine-repeat-box");
+      if (!box) return Promise.resolve();
+      var fd = taskFd(line);
+      var intervalInp = box.querySelector(".routine-interval-input");
+      var rawIv = intervalInp && intervalInp.value.trim();
+      if (rawIv) {
+        var n = parseInt(rawIv, 10);
+        if (n >= 2 && n <= 365) {
+          fd.append("repeat_day", "N_DAYS:" + n);
+          return postTaskAction("/tasks/set_repeat_day", fd).then(function (data) {
+            if (!data.ok) {
+              window.alert(data.message || "Ошибка");
+              return;
+            }
+            closeKebab(line);
+            window.location.reload();
+          });
+        }
+        if (!silentEmpty) window.alert("Интервал: число от 2 до 365 или оставь пустым.");
+        return Promise.resolve();
+      }
+      var daily = box.querySelector(".routine-daily-cb");
+      var weekdays = box.querySelectorAll(".routine-weekday-cb:checked");
+      if (daily && daily.checked) {
+        fd.append("repeat_day", "ежедневно");
+      } else {
+        if (!weekdays.length) {
+          if (!silentEmpty) {
+            window.alert(
+              "Отметь «Ежедневно», интервал в днях или хотя бы один день недели."
+            );
+          }
+          return Promise.resolve();
+        }
+        fd.append(
+          "repeat_day",
+          Array.from(weekdays).map(function (c) {
+            return c.value;
+          }).join(",")
+        );
+      }
+      return postTaskAction("/tasks/set_repeat_day", fd).then(function (data) {
+        if (!data.ok) {
+          window.alert(data.message || "Ошибка");
+          return;
+        }
+        closeKebab(line);
+        window.location.reload();
+      });
+    }
+
+    function scheduleRoutineRepeatSave(line) {
+      var tid = line.dataset.taskId || "_";
+      clearTimeout(routineSaveTimers[tid]);
+      routineSaveTimers[tid] = setTimeout(function () {
+        delete routineSaveTimers[tid];
+        submitRoutineRepeatFromBox(line, { silentEmpty: true }).catch(function () {});
+      }, 420);
     }
 
     document.addEventListener(
@@ -285,14 +405,12 @@
       }
       if (action === "move-up" || action === "move-down") {
         if (btn.disabled) return;
-        fd.append("direction", action === "move-up" ? "up" : "down");
-        taskActionReload(postTaskAction("/tasks/move_in_project", fd));
+        optimisticLineReorder(line, "/tasks/move_in_project", action === "move-up" ? "up" : "down");
         return;
       }
       if (action === "move-up-today" || action === "move-down-today") {
         if (btn.disabled) return;
-        fd.append("direction", action === "move-up-today" ? "up" : "down");
-        taskActionReload(postTaskAction("/tasks/move_in_today", fd));
+        optimisticLineReorder(line, "/tasks/move_in_today", action === "move-up-today" ? "up" : "down");
         return;
       }
       if (action === "set-estimate") {
@@ -327,39 +445,14 @@
         return;
       }
       if (action === "save-repeat-days") {
-        var box = btn.closest(".routine-repeat-box");
-        if (!box) return;
-        var intervalInp = box.querySelector(".routine-interval-input");
-        var rawIv = intervalInp && intervalInp.value.trim();
-        if (rawIv) {
-          var n = parseInt(rawIv, 10);
-          if (n >= 2 && n <= 365) {
-            fd.append("repeat_day", "N_DAYS:" + n);
-            taskActionReload(postTaskAction("/tasks/set_repeat_day", fd));
-            return;
-          }
-          window.alert("Интервал: число от 2 до 365 или оставь пустым.");
-          return;
-        }
-        var daily = box.querySelector(".routine-daily-cb");
-        var weekdays = box.querySelectorAll(".routine-weekday-cb:checked");
-        if (daily && daily.checked) {
-          fd.append("repeat_day", "ежедневно");
-        } else {
-          if (!weekdays.length) {
-            window.alert("Отметь «Ежедневно», интервал в днях или хотя бы один день недели.");
-            return;
-          }
-          fd.append(
-            "repeat_day",
-            Array.from(weekdays)
-              .map(function (c) {
-                return c.value;
-              })
-              .join(",")
-          );
-        }
-        taskActionReload(postTaskAction("/tasks/set_repeat_day", fd));
+        var boxR = btn.closest(".routine-repeat-box");
+        if (!boxR) return;
+        var lineR = boxR.closest(".task-line");
+        if (!lineR) return;
+        var tidR = lineR.dataset.taskId || "_";
+        clearTimeout(routineSaveTimers[tidR]);
+        delete routineSaveTimers[tidR];
+        submitRoutineRepeatFromBox(lineR, {}).catch(function () {});
         return;
       }
     });
@@ -396,6 +489,12 @@
           var dcb = bx2.querySelector(".routine-daily-cb");
           if (dcb) dcb.checked = false;
         }
+      }
+
+      var dowCh = e.target.closest(".routine-dow-cb");
+      if (dowCh) {
+        var rline = dowCh.closest(".task-line");
+        if (rline) scheduleRoutineRepeatSave(rline);
       }
 
       var cat = e.target.closest(".task-category-select");

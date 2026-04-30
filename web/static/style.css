@@ -1516,20 +1516,90 @@ pre.task-dump, pre.report {
 .task-menu-item--danger:hover,
 .task-menu-danger:hover { background: rgba(244, 33, 46, 0.12); color: #ff9a9a; }
 
-.project-sort-hint { font-size: 0.92rem; margin-bottom: 0.75rem; }
-.project-sort-advanced { margin-bottom: 1rem; padding: 0.5rem 0.85rem; }
-.project-sort-advanced-summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--fg);
-  padding: 0.35rem 0;
-  list-style: none;
-}
-.project-sort-advanced-summary::-webkit-details-marker { display: none; }
-.project-sort-toolbar--modal {
+/* Перенос срока: три кнопки в ряд */
+.task-reschedule-quick {
+  display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  padding: 0.5rem 0 0.25rem;
+  padding: 0 0.75rem 0.45rem;
+}
+.task-menu-chip--compact {
+  flex: 1 1 auto;
+  min-width: 5rem;
+  justify-content: center;
+}
+
+.project-active-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  margin-bottom: 0.35rem;
+}
+.project-active-title {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+}
+.project-sort-pop {
+  position: relative;
+  flex-shrink: 0;
+}
+.project-sort-trigger {
+  list-style: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 1.15rem;
+  cursor: pointer;
+  user-select: none;
+}
+.project-sort-trigger::-webkit-details-marker { display: none; }
+.project-sort-trigger:hover,
+.project-sort-pop[open] .project-sort-trigger {
+  color: var(--fg);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.project-sort-pop-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 60;
+  min-width: min(18rem, calc(100vw - 2rem));
+  padding: 0.5rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.project-sort-pop-panel .project-sort-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.project-sort-pop-panel .chip {
+  display: block;
+  text-align: center;
+}
+
+.routine-repeat-hint {
+  font-size: 0.82rem;
+  margin: 0 0 0.5rem;
+  padding: 0 0.75rem;
+  line-height: 1.35;
+}
+.routine-repeat-save--full {
+  display: block;
+  width: calc(100% - 1.5rem);
+  margin: 0.5rem 0.75rem 0.35rem;
+  text-align: center;
 }
 /* Блок «Перенос срока»: как у «Категория» — полоска и task-menu-label */
 .task-menu-row-time {
@@ -1740,7 +1810,7 @@ pre.task-dump, pre.report {
 .task-project { font-size: 0.88rem; }
 
 /* legacy primary buttons */
-button:not(.burger):not(.btn-voice):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-chip):not(.task-menu-ok):not(.task-text-save):not(.color-swatch):not(.task-move-btn) {
+button:not(.burger):not(.btn-voice):not(.btn-primary):not(.btn-danger-outline):not(.task-kebab-btn):not(.task-kebab-close):not(.task-menu-item):not(.task-menu-chip):not(.task-menu-ok):not(.task-text-save):not(.color-swatch):not(.task-move-btn):not(.routine-repeat-save) {
   padding: 0.5rem 0.9rem;
   border-radius: 8px;
   border: none;

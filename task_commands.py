@@ -595,8 +595,8 @@ def _normalize_web_repeat_day(raw: str) -> str | None:
             if p not in _REPEAT_DAY_ORDER:
                 return None
         return ",".join(c for c in _REPEAT_DAY_ORDER if c in parts)
-    if s in _REPEAT_WEB_ALLOWED:
-        return s
+    if low in _REPEAT_WEB_ALLOWED:
+        return low
     return None
 
 
