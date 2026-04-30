@@ -821,7 +821,7 @@ async def page_today(request: Request):
                         "repeat_interval": _repeat_interval_for_row(rd),
                         "project_label": pl,
                         "kebab_remove_from_plan": bool(t.get("is_routine")),
-                        "show_move_today": n_in_bucket > 1,
+                        "show_move_today": n_in_bucket >= 1,
                         "can_move_up_today": n_in_bucket > 1 and bi > 0,
                         "can_move_down_today": n_in_bucket > 1 and bi < n_in_bucket - 1,
                     }

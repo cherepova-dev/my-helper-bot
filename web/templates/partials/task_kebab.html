@@ -43,7 +43,7 @@
       </div>
     </div>
     {% endif %}
-    {% if row.show_move %}
+    {% if row.show_move | default(false) %}
     <div class="task-menu-row-move-order" role="group" aria-label="Порядок в проекте">
       <span class="task-menu-label">Порядок в проекте</span>
       <div class="task-move-order-row">
