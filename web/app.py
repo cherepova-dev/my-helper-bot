@@ -1338,7 +1338,8 @@ async def page_project_detail(request: Request, project_id: int):
 
     _maybe_transfer_overdue(uid)
     sort_q = (request.query_params.get("sort") or "").strip().lower()
-    proj_mode = db.get_project_sort_mode(uid, project_id)
+    _raw_mode = str(proj.get("sort_mode") or "hybrid").strip().lower()
+    proj_mode = _raw_mode if _raw_mode in ("hybrid", "manual") else "hybrid"
     if sort_q in ("manual", "date", "color", "text"):
         sort = sort_q
     elif sort_q == "hybrid":
@@ -1346,7 +1347,6 @@ async def page_project_detail(request: Request, project_id: int):
     else:
         sort = "manual" if proj_mode == "manual" else "hybrid"
     tasks = db.get_active_tasks_for_project(uid, project_id, sort=sort)
-    db.attach_project_labels(uid, tasks)
     rows: list[dict] = []
     _total = len(tasks)
     _show_move = sort in ("manual", "hybrid")
@@ -1397,8 +1397,16 @@ async def page_project_detail(request: Request, project_id: int):
     if sort_q:
         next_url = f"/projects/{project_id}?sort={sort_q}"
     w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
-    n_done_week = db.count_done_tasks_in_project_between(uid, project_id, w_start_utc, w_end_utc)
-    n_done_all = db.count_done_tasks_in_project_all(uid, project_id)
+    n_done_week, n_done_all = db.count_done_tasks_in_project_week_and_all(
+        uid, project_id, w_start_utc, w_end_utc
+    )
+    sort_display = {
+        "hybrid": "По умолчанию",
+        "manual": "По умолчанию",
+        "date": "По сроку",
+        "color": "По цвету",
+        "text": "По названию",
+    }.get(sort, "По умолчанию")
     return templates.TemplateResponse(
         request,
         "project_detail.html",
@@ -1410,6 +1418,7 @@ async def page_project_detail(request: Request, project_id: int):
             done_rows=done_rows,
             next_url=next_url,
             sort=sort,
+            sort_display=sort_display,
             color_choices=TASK_COLOR_CHOICES,
             category_choices=_category_choices(uid),
             project_stats={

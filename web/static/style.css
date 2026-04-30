@@ -1539,7 +1539,7 @@ pre.task-dump, pre.report {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   margin-bottom: 0.35rem;
 }
 .project-active-title {
@@ -1547,14 +1547,31 @@ pre.task-dump, pre.report {
   margin: 0;
   min-width: 0;
 }
+.project-sort-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+.project-sort-label {
+  font-size: 0.82rem;
+  line-height: 1.25;
+  text-align: right;
+}
+.project-sort-current {
+  color: var(--fg);
+  font-weight: 600;
+}
 .project-sort-pop {
   position: relative;
   flex-shrink: 0;
 }
 .project-sort-trigger {
   list-style: none;
-  width: 2.5rem;
-  height: 2.5rem;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  padding: 0 0.35rem;
   margin: 0;
   display: flex;
   align-items: center;
@@ -1563,7 +1580,7 @@ pre.task-dump, pre.report {
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--muted);
-  font-size: 1.15rem;
+  font-size: 0.95rem;
   cursor: pointer;
   user-select: none;
 }

@@ -27,19 +27,23 @@
 <form id="form-complete-project" method="post" action="/tasks/complete?next={{ next_url }}"></form>
 <div class="task-page-sections">
   <section class="task-date-section">
+    {% set _sd = sort_display if sort_display is defined else 'По умолчанию' %}
     <div class="project-active-heading-row">
       <h2 class="task-section-heading project-active-title">Активные шаги</h2>
-      <details class="project-sort-pop">
-        <summary class="project-sort-trigger" aria-label="Варианты сортировки" title="Сортировка">☰</summary>
-        <div class="project-sort-pop-panel">
-          <nav class="project-sort-toolbar" aria-label="Сортировка">
-            <a href="/projects/{{ project_id }}" class="chip{% if _sort == 'hybrid' or _sort == 'manual' %} is-active{% endif %}">Как на экране</a>
-            <a href="/projects/{{ project_id }}?sort=date" class="chip{% if _sort == 'date' %} is-active{% endif %}">По сроку</a>
-            <a href="/projects/{{ project_id }}?sort=color" class="chip{% if _sort == 'color' %} is-active{% endif %}">По цвету</a>
-            <a href="/projects/{{ project_id }}?sort=text" class="chip{% if _sort == 'text' %} is-active{% endif %}">По названию</a>
-          </nav>
-        </div>
-      </details>
+      <div class="project-sort-control">
+        <span class="project-sort-label muted" id="project-sort-heading">Сортировка: <strong class="project-sort-current">{{ _sd }}</strong></span>
+        <details class="project-sort-pop">
+          <summary class="project-sort-trigger" aria-label="Выбрать сортировку" title="Сортировка">▾</summary>
+          <div class="project-sort-pop-panel" aria-labelledby="project-sort-heading">
+            <nav class="project-sort-toolbar" aria-label="Варианты сортировки">
+              <a href="/projects/{{ project_id }}" class="chip{% if _sort == 'hybrid' or _sort == 'manual' %} is-active{% endif %}">По умолчанию</a>
+              <a href="/projects/{{ project_id }}?sort=date" class="chip{% if _sort == 'date' %} is-active{% endif %}">По сроку</a>
+              <a href="/projects/{{ project_id }}?sort=color" class="chip{% if _sort == 'color' %} is-active{% endif %}">По цвету</a>
+              <a href="/projects/{{ project_id }}?sort=text" class="chip{% if _sort == 'text' %} is-active{% endif %}">По названию</a>
+            </nav>
+          </div>
+        </details>
+      </div>
     </div>
     <ul class="task-list task-list--compact">
       {% for row in rows %}

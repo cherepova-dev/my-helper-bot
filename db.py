@@ -2242,6 +2242,24 @@ def count_done_tasks_in_project_all(user_id: int, project_id: int) -> int:
     return int(row["c"]) if row and row.get("c") is not None else 0
 
 
+def count_done_tasks_in_project_week_and_all(
+    user_id: int, project_id: int, week_start_utc: str, week_end_utc_exclusive: str
+) -> tuple[int, int]:
+    """Один запрос: завершённые за календарную неделю и всего (страница проекта)."""
+    row = _fetchone(
+        "SELECT "
+        "COALESCE(SUM(CASE WHEN completed_at >= %s AND completed_at < %s THEN 1 ELSE 0 END), 0) AS wk, "
+        "COUNT(*) AS all_c "
+        "FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'done'",
+        (week_start_utc, week_end_utc_exclusive, user_id, project_id),
+    )
+    if not row:
+        return 0, 0
+    wk = row.get("wk")
+    ac = row.get("all_c")
+    return int(wk) if wk is not None else 0, int(ac) if ac is not None else 0
+
+
 def log_routine_completion(user_id: int, task_id: int, at_iso: str) -> None:
     _execute(
         "INSERT INTO routine_completions (user_id, task_id, completed_at) VALUES (%s, %s, %s)",
