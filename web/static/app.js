@@ -203,13 +203,21 @@
       "pointerdown",
       function (e) {
         if (e.button != null && e.button !== 0) return;
-        if (e.target.closest(".task-kebab")) return;
+        if (e.target.closest(".task-kebab-btn")) return;
+        if (e.target.closest(".task-kebab-panel")) return;
         document.querySelectorAll(".task-kebab[open]").forEach(function (el) {
           el.removeAttribute("open");
         });
       },
       true
     );
+
+    document.addEventListener("click", function (e) {
+      if (e.target.classList.contains("task-kebab-backdrop")) {
+        var det = e.target.closest(".task-kebab");
+        if (det) det.removeAttribute("open");
+      }
+    });
 
     document.addEventListener("click", function (e) {
       var btn = e.target.closest("[data-action]");
@@ -279,6 +287,12 @@
         if (btn.disabled) return;
         fd.append("direction", action === "move-up" ? "up" : "down");
         taskActionReload(postTaskAction("/tasks/move_in_project", fd));
+        return;
+      }
+      if (action === "move-up-today" || action === "move-down-today") {
+        if (btn.disabled) return;
+        fd.append("direction", action === "move-up-today" ? "up" : "down");
+        taskActionReload(postTaskAction("/tasks/move_in_today", fd));
         return;
       }
       if (action === "set-estimate") {
@@ -506,6 +520,29 @@
     });
   }
 
+  function collectTodayBucketOrder(bucketRu) {
+    var sec = document.querySelector(
+      '.today-bucket-section[data-drop-bucket="' + bucketRu + '"]'
+    );
+    if (!sec) return "";
+    var ul = sec.querySelector("ul.task-list");
+    if (!ul) return "";
+    return Array.from(ul.querySelectorAll(".task-line[data-task-id]"))
+      .map(function (li) {
+        return li.dataset.taskId;
+      })
+      .join(",");
+  }
+
+  function serializeTodayOrderFormData() {
+    var fd = new FormData();
+    fd.append("next", "/today");
+    fd.append("order_utro", collectTodayBucketOrder("утро"));
+    fd.append("order_den", collectTodayBucketOrder("день"));
+    fd.append("order_vecher", collectTodayBucketOrder("вечер"));
+    return fd;
+  }
+
   function initTaskDragDrop() {
     var dragTaskId = null;
     var dragLine = null;
@@ -553,6 +590,22 @@
       "dragover",
       function (e) {
         if (!dragTaskId) return;
+        var innerToday = e.target.closest(".task-line[data-drop-zone-inner]");
+        if (innerToday && innerToday.closest(".today-bucket-section")) {
+          if (!e.target.closest("input, button, .task-kebab, .task-cb, label")) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }
+          return;
+        }
+        var innerProj = e.target.closest(".task-line[data-drop-project-inner]");
+        if (innerProj) {
+          if (!e.target.closest("input, button, .task-kebab, .task-cb, label")) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }
+          return;
+        }
         var zone = e.target.closest(".task-drop-section");
         clearAllDropHover();
         if (zone) {
@@ -568,6 +621,83 @@
       "drop",
       function (e) {
         if (!dragTaskId || !dragLine) return;
+
+        var projLine = e.target.closest(".task-line[data-drop-project-inner]");
+        if (projLine && projLine !== dragLine) {
+          if (e.target.closest("input, button, .task-kebab, .task-cb, label")) return;
+          var pid = projLine.getAttribute("data-project-id");
+          var dragPid = dragLine.getAttribute("data-project-id");
+          if (!pid || pid !== dragPid) return;
+          e.preventDefault();
+          e.stopPropagation();
+          var ul = projLine.closest("ul.task-list");
+          if (!ul || !ul.contains(dragLine)) return;
+          var rect = projLine.getBoundingClientRect();
+          var before = e.clientY < rect.top + rect.height / 2;
+          if (before) ul.insertBefore(dragLine, projLine);
+          else ul.insertBefore(dragLine, projLine.nextSibling);
+          var ids = Array.from(ul.querySelectorAll(".task-line[data-task-id]")).map(function (
+            li
+          ) {
+            return li.dataset.taskId;
+          });
+          var fd = new FormData();
+          fd.append("project_id", pid);
+          fd.append("task_ids", ids.join(","));
+          fd.append("next", dragLine.dataset.nextUrl || "/projects/" + pid);
+          taskActionReload(postTaskAction("/tasks/reorder_project", fd));
+          return;
+        }
+
+        var targetLine = e.target.closest(".task-line[data-drop-zone-inner]");
+        if (targetLine && targetLine !== dragLine) {
+          if (e.target.closest("input, button, .task-kebab, .task-cb, label")) return;
+          var section = targetLine.closest(".today-bucket-section");
+          if (!section || !dragLine.closest(".today-bucket-section")) return;
+          e.preventDefault();
+          e.stopPropagation();
+          clearAllDropHover();
+          var newBucket = section.getAttribute("data-drop-bucket");
+          var oldBucket = dragLine.getAttribute("data-today-bucket");
+          var ul = targetLine.closest("ul.task-list");
+          if (!ul) return;
+          var rect = targetLine.getBoundingClientRect();
+          var before = e.clientY < rect.top + rect.height / 2;
+          if (before) ul.insertBefore(dragLine, targetLine);
+          else ul.insertBefore(dragLine, targetLine.nextSibling);
+          dragLine.setAttribute("data-today-bucket", newBucket || oldBucket);
+
+          var fdMove = new FormData();
+          fdMove.append("task_id", dragTaskId);
+          fdMove.append("next", "/today");
+          fdMove.append("mode", "today_bucket");
+          fdMove.append("bucket", newBucket || "");
+          fdMove.append("section_kind", "");
+          fdMove.append("section_date", "");
+
+          var chain = Promise.resolve();
+          if (oldBucket !== newBucket && newBucket) {
+            chain = chain.then(function () {
+              return postTaskAction("/tasks/drag_move", fdMove).then(function (d) {
+                if (!d.ok) throw new Error(d.message || "Не удалось сменить блок дня");
+              });
+            });
+          }
+          chain
+            .then(function () {
+              return postTaskAction("/tasks/sync_today_order", serializeTodayOrderFormData());
+            })
+            .then(function (d) {
+              if (!d.ok) throw new Error(d.message || "Не удалось сохранить порядок");
+              window.location.reload();
+            })
+            .catch(function (err) {
+              window.alert(err.message || "Ошибка");
+              window.location.reload();
+            });
+          return;
+        }
+
         var zone = e.target.closest(".task-drop-section");
         if (!zone) return;
         e.preventDefault();
@@ -602,9 +732,17 @@
         }
         taskActionReload(postTaskAction("/tasks/drag_move", fd));
       },
-      false
+      true
     );
   }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      document.querySelectorAll(".task-kebab[open]").forEach(function (el) {
+        el.removeAttribute("open");
+      });
+    }
+  });
 
   document.addEventListener("DOMContentLoaded", function () {
     initNav();

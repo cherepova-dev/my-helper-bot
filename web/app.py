@@ -785,12 +785,18 @@ async def page_today(request: Request):
         def _sort_key(p: tuple[int, dict]) -> tuple:
             t = p[1]
             ti = (t.get("due_time") or "").strip()
-            return (0 if ti else 1, ti or "99:99", t.get("id", 0))
+            return (
+                int(t.get("today_sort") or 0),
+                0 if ti else 1,
+                ti or "99:99",
+                t.get("id", 0),
+            )
 
         for bucket in _order:
             pairs = sorted(buckets[bucket], key=_sort_key)
+            n_in_bucket = len(pairs)
             rows = []
-            for _num, t in pairs:
+            for bi, (_num, t) in enumerate(pairs):
                 emoji = _task_row_emoji(t)
                 time_part = ""
                 if t.get("due_time"):
@@ -815,6 +821,9 @@ async def page_today(request: Request):
                         "repeat_interval": _repeat_interval_for_row(rd),
                         "project_label": pl,
                         "kebab_remove_from_plan": bool(t.get("is_routine")),
+                        "show_move_today": n_in_bucket > 1,
+                        "can_move_up_today": n_in_bucket > 1 and bi > 0,
+                        "can_move_down_today": n_in_bucket > 1 and bi < n_in_bucket - 1,
                     }
                 )
             if not _show_today_bucket(bucket, local_hour, len(rows)):
@@ -1328,14 +1337,19 @@ async def page_project_detail(request: Request, project_id: int):
     from bot_v2 import _format_date_human, _format_time_human
 
     _maybe_transfer_overdue(uid)
-    sort = (request.query_params.get("sort") or "manual").strip().lower()
-    if sort not in ("manual", "date", "color", "text"):
-        sort = "manual"
+    sort_q = (request.query_params.get("sort") or "").strip().lower()
+    proj_mode = db.get_project_sort_mode(uid, project_id)
+    if sort_q in ("manual", "date", "color", "text"):
+        sort = sort_q
+    elif sort_q == "hybrid":
+        sort = "hybrid"
+    else:
+        sort = "manual" if proj_mode == "manual" else "hybrid"
     tasks = db.get_active_tasks_for_project(uid, project_id, sort=sort)
     db.attach_project_labels(uid, tasks)
     rows: list[dict] = []
     _total = len(tasks)
-    _show_move = sort == "manual"
+    _show_move = sort in ("manual", "hybrid")
     for _idx, t in enumerate(tasks):
         emoji = _task_row_emoji(t)
         tp = ""
@@ -1380,8 +1394,8 @@ async def page_project_detail(request: Request, project_id: int):
             {"text": (t.get("text") or "").strip(), "done_label": done_label}
         )
     next_url = f"/projects/{project_id}"
-    if sort != "manual":
-        next_url = f"/projects/{project_id}?sort={sort}"
+    if sort_q:
+        next_url = f"/projects/{project_id}?sort={sort_q}"
     w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
     n_done_week = db.count_done_tasks_in_project_between(uid, project_id, w_start_utc, w_end_utc)
     n_done_all = db.count_done_tasks_in_project_all(uid, project_id)
@@ -1902,6 +1916,73 @@ async def action_move_in_project(
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row(request)["id"]
     result = db.move_task_in_project(uid, task_id, direction)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/move_in_today")
+async def action_move_in_today(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/today"),
+    direction: str = Form("up"),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = db.move_task_in_today_order(uid, task_id, direction)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/sync_today_order")
+async def action_sync_today_order(
+    request: Request,
+    next: str = Form("/today"),
+    order_utro: str = Form(""),
+    order_den: str = Form(""),
+    order_vecher: str = Form(""),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = db.sync_today_bucket_orders(uid, order_utro, order_den, order_vecher)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/reorder_project")
+async def action_reorder_project(
+    request: Request,
+    project_id: int = Form(...),
+    task_ids: str = Form(...),
+    next: str = Form("/projects"),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    ids: list[int] = []
+    for x in (task_ids or "").split(","):
+        x = x.strip()
+        if not x:
+            continue
+        try:
+            ids.append(int(x))
+        except ValueError:
+            err = {"ok": False, "message": "Неверный список задач."}
+            if _wants_json(request):
+                return JSONResponse(err)
+            return _flash_redirect(request, next, err["message"], False)
+    result = db.reorder_project_tasks(uid, project_id, ids)
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])

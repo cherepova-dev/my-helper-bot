@@ -101,6 +101,7 @@ def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
         )
         if not task_row:
             return {"ok": False, "message": "Не удалось сохранить задачу."}
+        db.append_color_sort_new_project_task(internal_user_id, project_id, int(task_row["id"]))
         rd = task_row.get("repeat_day") or repeat_day
         msg = f"Задача принята: «{task_title}». Категория: {category_emoji} {category_name}. "
         if is_routine and rd:
@@ -503,6 +504,7 @@ def set_task_time_bucket_by_id(user_id: int, task_id: int, bucket: str) -> dict[
             return {"ok": False, "message": "Задача не найдена."}
         updated = db.update_task(task_id, user_id, time_of_day=None)
         if updated:
+            db.ensure_today_sort_tail(user_id, task_id)
             return {"ok": True, "message": "Время суток снято."}
         return {"ok": False, "message": "Не удалось обновить."}
     if b not in ("утро", "день", "вечер", "ночь"):
@@ -512,6 +514,7 @@ def set_task_time_bucket_by_id(user_id: int, task_id: int, bucket: str) -> dict[
     # Иначе блок в UI не меняется: _task_time_bucket сначала смотрит на due_time.
     updated = db.update_task(task_id, user_id, time_of_day=b, due_time=None)
     if updated:
+        db.ensure_today_sort_tail(user_id, task_id)
         return {"ok": True, "message": "Время суток обновлено."}
     return {"ok": False, "message": "Не удалось обновить."}
 

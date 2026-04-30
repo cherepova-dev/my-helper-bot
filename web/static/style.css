@@ -1370,6 +1370,20 @@ pre.task-dump, pre.report {
 .task-kebab {
   flex-shrink: 0;
   position: relative;
+  z-index: 1;
+}
+.task-kebab[open] {
+  z-index: 1001;
+}
+.task-kebab-backdrop {
+  display: none;
+}
+.task-kebab[open] > .task-kebab-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.48);
+  z-index: 998;
 }
 .task-kebab-btn {
   list-style: none;
@@ -1402,21 +1416,59 @@ pre.task-dump, pre.report {
   margin-top: 0.2rem;
   width: min(22rem, calc(100vw - 1.5rem));
   max-width: min(28rem, calc(100vw - 1rem));
-  padding: 0 0 0.35rem;
+  padding: 0;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   z-index: 50;
 }
+/* Нижняя шторка / модалка как в мобильных приложениях */
+.task-kebab-panel--sheet {
+  padding: 0;
+}
+.task-kebab[open] .task-kebab-panel--sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: auto;
+  margin-top: 0;
+  width: 100%;
+  max-width: none;
+  max-height: min(88vh, 640px);
+  border-radius: 16px 16px 0 0;
+  z-index: 999;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.task-kebab-panel-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 0 calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 720px) {
+  .task-kebab[open] .task-kebab-panel--sheet {
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(420px, calc(100vw - 2rem));
+    max-height: min(82vh, 600px);
+    border-radius: 16px;
+  }
+}
 .task-kebab-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.4rem 0.5rem 0.35rem 0.75rem;
+  padding: 0.55rem 0.5rem 0.45rem 0.85rem;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 0.25rem;
+  flex-shrink: 0;
 }
 .task-kebab-panel-title {
   font-size: 0.78rem;
@@ -1463,6 +1515,22 @@ pre.task-dump, pre.report {
 .task-menu-danger { color: #f7777f; }
 .task-menu-item--danger:hover,
 .task-menu-danger:hover { background: rgba(244, 33, 46, 0.12); color: #ff9a9a; }
+
+.project-sort-hint { font-size: 0.92rem; margin-bottom: 0.75rem; }
+.project-sort-advanced { margin-bottom: 1rem; padding: 0.5rem 0.85rem; }
+.project-sort-advanced-summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 0.35rem 0;
+  list-style: none;
+}
+.project-sort-advanced-summary::-webkit-details-marker { display: none; }
+.project-sort-toolbar--modal {
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.5rem 0 0.25rem;
+}
 /* Блок «Перенос срока»: как у «Категория» — полоска и task-menu-label */
 .task-menu-row-time {
   padding: 0.4rem 0.75rem 0.55rem;

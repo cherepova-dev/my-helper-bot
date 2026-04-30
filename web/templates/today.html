@@ -11,7 +11,7 @@
 {% if empty %}
 <p class="muted">На сегодня задач нет.</p>
 {% else %}
-<p class="muted drag-hint">Перетащи строку задачи (не чекбокс и не меню ⋯) в другой блок времени суток.</p>
+<p class="muted drag-hint">Перетащи строку задачи (не чекбокс и не меню ⋯), чтобы поменять порядок внутри блока или перенести в Утро / День / Вечер. Ещё порядок можно менять стрелками в меню ⋯ → «Порядок».</p>
 <form id="form-complete-today" method="post" action="/tasks/complete?next=/today"></form>
 <div class="task-form card card--flush today-page-card">
   <h2 class="home-section-title">Список на сегодня</h2>
@@ -22,7 +22,7 @@
     {% endif %}
     <ul class="task-list task-list--compact task-list--dropzone">
       {% for row in sec.rows %}
-      <li class="task-line drag-enabled{% if row.color %} has-color color-{{ row.color }}{% endif %}" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}">
+      <li class="task-line drag-enabled{% if row.color %} has-color color-{{ row.color }}{% endif %}" draggable="true" data-task-id="{{ row.task_id }}" data-next-url="{{ next_url }}" data-task-routine="{{ 1 if row.is_routine else 0 }}" data-today-bucket="{{ sec.bucket_key }}" data-drop-zone-inner="1">
         <div class="task-line-row">
           <input class="task-cb" type="checkbox" name="task_id" value="{{ row.task_id }}" id="cb{{ row.task_id }}" form="form-complete-today" draggable="false">
           <label class="task-num-emoji" for="cb{{ row.task_id }}" draggable="false">

@@ -172,6 +172,8 @@ def _init_tables_pg() -> None:
         "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN estimate_min INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN today_sort INTEGER DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN sort_mode TEXT DEFAULT 'hybrid'",
         "ALTER TABLE projects ADD COLUMN archived_at TIMESTAMPTZ",
         "ALTER TABLE users ALTER COLUMN telegram_id DROP NOT NULL",
         "ALTER TABLE users ADD COLUMN email TEXT",
@@ -277,6 +279,8 @@ def _init_tables_sqlite() -> None:
         "ALTER TABLE tasks ADD COLUMN color TEXT DEFAULT ''",
         "ALTER TABLE tasks ADD COLUMN color_sort INTEGER DEFAULT 0",
         "ALTER TABLE tasks ADD COLUMN estimate_min INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN today_sort INTEGER DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN sort_mode TEXT DEFAULT 'hybrid'",
         "ALTER TABLE projects ADD COLUMN archived_at TEXT",
         "ALTER TABLE users ADD COLUMN email TEXT",
         "ALTER TABLE users ADD COLUMN password_hash TEXT",
@@ -938,19 +942,270 @@ def count_archived_projects(user_id: int) -> int:
 
 VALID_TASK_COLORS = ("", "red", "orange", "yellow", "green", "blue", "purple", "gray")
 
+# Порядок шагов проекта «по умолчанию»: сначала с датой (по дате/времени), без даты — внизу, внутри группы — color_sort.
+_PROJECT_ORDER_HYBRID = (
+    "(CASE WHEN due_date IS NULL OR TRIM(COALESCE(CAST(due_date AS TEXT), '')) = '' "
+    "THEN 1 ELSE 0 END), "
+    "COALESCE(CAST(due_date AS TEXT), '9999-12-31'), "
+    "COALESCE(CAST(due_time AS TEXT), ''), "
+    "COALESCE(color_sort, 0), id"
+)
+
+
+def get_project_sort_mode(user_id: int, project_id: int) -> str:
+    row = _fetchone(
+        "SELECT COALESCE(sort_mode, 'hybrid') AS sm FROM projects WHERE id = %s AND user_id = %s",
+        (project_id, user_id),
+    )
+    if not row:
+        return "hybrid"
+    m = str(row.get("sm") or "hybrid").strip().lower()
+    return m if m in ("hybrid", "manual") else "hybrid"
+
+
+def set_project_sort_mode(user_id: int, project_id: int, mode: str) -> bool:
+    m = (mode or "").strip().lower()
+    if m not in ("hybrid", "manual"):
+        return False
+    n = _execute(
+        "UPDATE projects SET sort_mode = %s WHERE id = %s AND user_id = %s",
+        (m, project_id, user_id),
+    )
+    return n > 0
+
+
+def _project_tasks_hybrid_ordered(user_id: int, project_id: int) -> list[dict]:
+    return _fetchall(
+        f"SELECT * FROM tasks WHERE user_id = %s AND project_id = %s "
+        f"AND status = 'active' ORDER BY {_PROJECT_ORDER_HYBRID}",
+        (user_id, project_id),
+    )
+
+
+def migrate_project_to_manual_order(user_id: int, project_id: int) -> None:
+    """Текущий гибридный порядок → color_sort, проект в режиме manual."""
+    rows = _project_tasks_hybrid_ordered(user_id, project_id)
+    for i, r in enumerate(rows):
+        _execute(
+            "UPDATE tasks SET color_sort = %s WHERE id = %s AND user_id = %s",
+            ((i + 1) * 10, int(r["id"]), user_id),
+        )
+    _execute(
+        "UPDATE projects SET sort_mode = 'manual' WHERE id = %s AND user_id = %s",
+        (project_id, user_id),
+    )
+
+
+def append_color_sort_new_project_task(user_id: int, project_id: int, task_id: int) -> None:
+    """Новая задача в проекте: вниз бездатных (hybrid) или вниз списка (manual)."""
+    mode = get_project_sort_mode(user_id, project_id)
+    task = get_active_task_by_id(user_id, task_id)
+    if not task:
+        return
+    has_date = bool((task.get("due_date") or "").strip())
+    if mode == "hybrid" and has_date:
+        return
+    if mode == "manual":
+        row = _fetchone(
+            "SELECT MAX(COALESCE(color_sort, 0)) AS m FROM tasks "
+            "WHERE user_id = %s AND project_id = %s AND status = 'active' AND id <> %s",
+            (user_id, project_id, task_id),
+        )
+    else:
+        row = _fetchone(
+            "SELECT MAX(COALESCE(color_sort, 0)) AS m FROM tasks "
+            "WHERE user_id = %s AND project_id = %s AND status = 'active' AND id <> %s "
+            "AND (due_date IS NULL OR TRIM(COALESCE(CAST(due_date AS TEXT), '')) = '')",
+            (user_id, project_id, task_id),
+        )
+    mx = int(row["m"]) if row and row.get("m") is not None else 0
+    _execute(
+        "UPDATE tasks SET color_sort = %s WHERE id = %s AND user_id = %s",
+        (mx + 10, task_id, user_id),
+    )
+
+
+def web_today_bucket_key(t: dict) -> str:
+    """Три блока страницы «Сегодня»: утро / день / вечер (вечер + ночь + без блока)."""
+    from task_parsing import time_of_day_from_hour
+
+    ti = (t.get("due_time") or "").strip()
+    if ti:
+        try:
+            h = int(ti.split(":", 1)[0])
+            inferred = time_of_day_from_hour(h)
+            if inferred == "утро":
+                return "утро"
+            if inferred == "день":
+                return "день"
+            return "вечер"
+        except (ValueError, IndexError):
+            pass
+    tod = (t.get("time_of_day") or "").strip().lower()
+    if tod == "утро":
+        return "утро"
+    if tod == "день":
+        return "день"
+    return "вечер"
+
+
+def today_bucket_task_lists(user_id: int) -> dict[str, list[dict]]:
+    raw = get_today_tasks(user_id)
+    buckets: dict[str, list[dict]] = {"утро": [], "день": [], "вечер": []}
+    for t in raw:
+        buckets[web_today_bucket_key(t)].append(t)
+
+    def _sort_key(row: dict) -> tuple:
+        tii = (row.get("due_time") or "").strip()
+        return (
+            int(row.get("today_sort") or 0),
+            0 if tii else 1,
+            tii or "99:99",
+            int(row.get("id") or 0),
+        )
+
+    for bk in buckets:
+        buckets[bk].sort(key=_sort_key)
+    return buckets
+
+
+def ensure_today_sort_tail(user_id: int, task_id: int) -> None:
+    """После смены блока дня — в конец этого блока по today_sort."""
+    task = get_active_task_by_id(user_id, task_id)
+    if not task:
+        return
+    bk = web_today_bucket_key(task)
+    buckets = today_bucket_task_lists(user_id)
+    lst = buckets.get(bk) or []
+    others = [int(t.get("today_sort") or 0) for t in lst if int(t["id"]) != int(task_id)]
+    mx = max(others) if others else 0
+    _execute(
+        "UPDATE tasks SET today_sort = %s WHERE id = %s AND user_id = %s",
+        (mx + 10, task_id, user_id),
+    )
+
+
+def move_task_in_today_order(user_id: int, task_id: int, direction: str) -> dict:
+    """Стрелки вверх/вниз внутри блока «Сегодня»."""
+    d = (direction or "").strip().lower()
+    if d not in ("up", "down"):
+        return {"ok": False, "message": "Направление: вверх или вниз."}
+    buckets = today_bucket_task_lists(user_id)
+    tid = int(task_id)
+    loc_bk = None
+    loc_list: list[dict] | None = None
+    for bk, lst in buckets.items():
+        if any(int(t["id"]) == tid for t in lst):
+            loc_bk = bk
+            loc_list = lst
+            break
+    if not loc_list:
+        return {"ok": False, "message": "Задача не в списке на сегодня."}
+    rows = [{"id": int(t["id"]), "today_sort": int(t.get("today_sort") or 0)} for t in loc_list]
+    if len(rows) < 2:
+        return {"ok": False, "message": "В блоке одна задача."}
+    ts_vals = {r["today_sort"] for r in rows}
+    needs_norm = len(ts_vals) < len(rows) or (len(rows) > 1 and all(r["today_sort"] == 0 for r in rows))
+    if needs_norm:
+        for i, r in enumerate(rows):
+            ns = (i + 1) * 10
+            _execute(
+                "UPDATE tasks SET today_sort = %s WHERE id = %s AND user_id = %s",
+                (ns, r["id"], user_id),
+            )
+            r["today_sort"] = ns
+    idx = next((i for i, r in enumerate(rows) if r["id"] == tid), -1)
+    if idx < 0:
+        return {"ok": False, "message": "Задача не найдена."}
+    swap_i = idx - 1 if d == "up" else idx + 1
+    if swap_i < 0 or swap_i >= len(rows):
+        return {"ok": False, "message": "Уже на краю блока."}
+    a, b = rows[idx], rows[swap_i]
+    a_ts, b_ts = a["today_sort"], b["today_sort"]
+    _execute(
+        "UPDATE tasks SET today_sort = %s WHERE id = %s AND user_id = %s",
+        (b_ts, a["id"], user_id),
+    )
+    _execute(
+        "UPDATE tasks SET today_sort = %s WHERE id = %s AND user_id = %s",
+        (a_ts, b["id"], user_id),
+    )
+    return {"ok": True, "message": "Порядок обновлён."}
+
+
+def sync_today_bucket_orders(
+    user_id: int,
+    orders_utro: str = "",
+    orders_den: str = "",
+    orders_vecher: str = "",
+) -> dict:
+    """Сохраняет порядок задач по блокам (ids через запятую). Пустая строка — блок не трогаем."""
+
+    def _parse(s: str) -> list[int] | None:
+        s = (s or "").strip()
+        if not s:
+            return None
+        out: list[int] = []
+        for part in s.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                out.append(int(part))
+            except ValueError:
+                return None
+        return out
+
+    buckets = today_bucket_task_lists(user_id)
+    mapping = {"утро": _parse(orders_utro), "день": _parse(orders_den), "вечер": _parse(orders_vecher)}
+    for bk, maybe in mapping.items():
+        if maybe is None:
+            continue
+        valid_ids = sorted(int(t["id"]) for t in buckets[bk])
+        got = sorted(int(x) for x in maybe)
+        if valid_ids != got:
+            return {"ok": False, "message": f"Неверный список задач для «{bk}»."}
+        for i, tid in enumerate(maybe):
+            _execute(
+                "UPDATE tasks SET today_sort = %s WHERE id = %s AND user_id = %s",
+                ((i + 1) * 10, int(tid), user_id),
+            )
+    return {"ok": True, "message": "Порядок сохранён."}
+
+
+def reorder_project_tasks(user_id: int, project_id: int, ordered_task_ids: list[int]) -> dict:
+    """Порядок после drag-and-drop на странице проекта."""
+    if not get_project(user_id, project_id):
+        return {"ok": False, "message": "Проект не найден."}
+    if get_project_sort_mode(user_id, project_id) == "hybrid":
+        migrate_project_to_manual_order(user_id, project_id)
+    cur = _fetchall(
+        "SELECT id FROM tasks WHERE user_id = %s AND project_id = %s AND status = 'active' ORDER BY id",
+        (user_id, project_id),
+    )
+    cur_ids = sorted(int(r["id"]) for r in cur)
+    got = sorted(int(x) for x in ordered_task_ids)
+    if cur_ids != got:
+        return {"ok": False, "message": "Список не совпадает с задачами проекта."}
+    for i, tid in enumerate(ordered_task_ids):
+        _execute(
+            "UPDATE tasks SET color_sort = %s WHERE id = %s AND user_id = %s",
+            ((i + 1) * 10, int(tid), user_id),
+        )
+    return {"ok": True, "message": "Порядок сохранён."}
+
 
 def get_active_tasks_for_project(
-    user_id: int, project_id: int, sort: str = "manual"
+    user_id: int, project_id: int, sort: str = "hybrid"
 ) -> list[dict]:
     """
-    Возвращает активные задачи проекта.
+    Активные задачи проекта.
     sort:
-      - "manual" (по умолчанию): ручной порядок — color_sort → id (для перетаскивания/стрелок);
-      - "date": срок → время → id;
-      - "color": задачи без цвета в конце, цветные сгруппированы и отсортированы по color_sort;
-      - "text": по тексту задачи (без учёта регистра).
+      - "hybrid" (режим по умолчанию в БД): срок → время → color_sort → id; без даты — внизу;
+      - "manual": только color_sort (после ручной перестановки);
+      - "date", "color", "text": как раньше.
     """
-    s = (sort or "manual").strip().lower()
+    s = (sort or "hybrid").strip().lower()
     if s == "date":
         order = (
             "COALESCE(CAST(due_date AS TEXT), '9999-12-31'), "
@@ -964,8 +1219,10 @@ def get_active_tasks_for_project(
         )
     elif s == "text":
         order = "lower(text), id"
-    else:
+    elif s == "manual":
         order = "COALESCE(color_sort, 0), id"
+    else:
+        order = _PROJECT_ORDER_HYBRID
     return _fetchall(
         f"SELECT * FROM tasks WHERE user_id = %s AND project_id = %s "
         f"AND status = 'active' ORDER BY {order}",
@@ -974,12 +1231,7 @@ def get_active_tasks_for_project(
 
 
 def move_task_in_project(user_id: int, task_id: int, direction: str) -> dict:
-    """Двигает задачу вверх/вниз внутри проекта через color_sort.
-
-    Если у активных задач проекта color_sort одинаковые/нулевые — однократно нормализует
-    их по текущему порядку отображения, после чего меняет местами текущую и соседнюю задачи.
-    direction: 'up' | 'down'.
-    """
+    """Вверх/вниз в проекте; при режиме hybrid сначала фиксируем порядок в manual."""
     d = (direction or "").strip().lower()
     if d not in ("up", "down"):
         return {"ok": False, "message": "Направление должно быть 'up' или 'down'."}
@@ -991,6 +1243,8 @@ def move_task_in_project(user_id: int, task_id: int, direction: str) -> dict:
     if not task or task.get("project_id") is None:
         return {"ok": False, "message": "Задача не найдена в проекте."}
     pid = int(task["project_id"])
+    if get_project_sort_mode(user_id, pid) == "hybrid":
+        migrate_project_to_manual_order(user_id, pid)
     rows = _fetchall(
         "SELECT id, COALESCE(color_sort, 0) AS color_sort FROM tasks "
         "WHERE user_id = %s AND project_id = %s AND status = 'active' "
