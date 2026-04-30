@@ -3,14 +3,44 @@
 {% block top_title %}Проекты: сводка{% endblock %}
 {% block content %}
 <h1 class="page-heading">Отчёт по проектам</h1>
-<p class="muted">Текущая календарная неделя: <strong>{{ week_label }}</strong>. Считаются обычные задачи со статусом «выполнено» (шаги проекта).</p>
+<p class="muted">Календарная неделя: <strong>{{ week_label }}</strong>. Сейчас <strong>{{ week_day_elapsed }}</strong>-й день недели (от понедельника). Считаются шаги со статусом «выполнено» с датой закрытия в этом интервале.</p>
 
 {% if empty %}
-<p class="muted">Пока нет проектов.</p>
+<p class="muted">Пока нет проектов (включая архив).</p>
 {% else %}
-<section class="card">
+<aside class="card report-insight-card" role="note">
+  <p class="report-insight-text"><strong>Коротко:</strong> если к четвергу закрыто столько же шагов, сколько прошло дней недели, — это уже сильный ритм, даже если до конца недели ещё далеко. Не обязательно тянуть «все семь дней» в счётчике.</p>
+</aside>
+
+{% if hot_projects %}
+<section class="card report-project-section">
+  <h2 class="home-section-title">Самые активные на этой неделе</h2>
+  <p class="muted section-hint">Есть закрытые шаги за текущую календарную неделю.</p>
   <ul class="project-report-list">
-    {% for p in report_rows %}
+    {% for p in hot_projects %}
+    <li class="project-report-item">
+      <a href="/projects/{{ p.id }}" class="project-report-link">
+        <span class="project-report-emoji">{{ p.emoji }}</span>
+        <span class="project-report-title">{{ p.title }}</span>
+      </a>
+      <div class="project-report-stats muted">
+        <span>Активных: {{ p.n_active }}</span>
+        <span>За неделю: {{ p.n_done_week }}</span>
+        <span>Всего сделано: {{ p.n_done_all }}</span>
+      </div>
+      {% if p.pace_note %}<p class="project-report-note">{{ p.pace_note }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if calm_projects %}
+<section class="card report-project-section">
+  <h2 class="home-section-title">Остальные активные проекты</h2>
+  <p class="muted section-hint">На этой неделе пока без закрытых шагов — можно сдвинуть с места одним маленьким делом.</p>
+  <ul class="project-report-list">
+    {% for p in calm_projects %}
     <li class="project-report-item">
       <a href="/projects/{{ p.id }}" class="project-report-link">
         <span class="project-report-emoji">{{ p.emoji }}</span>
@@ -25,5 +55,28 @@
     {% endfor %}
   </ul>
 </section>
+{% endif %}
+
+{% if archived_rows %}
+<section class="card report-project-section report-project-section--archive">
+  <h2 class="home-section-title">Закрытые (в архиве)</h2>
+  <p class="muted section-hint">История шагов сохраняется. <a href="/projects/archive">Все архивные проекты →</a></p>
+  <ul class="project-report-list">
+    {% for p in archived_rows %}
+    <li class="project-report-item">
+      <a href="/projects/{{ p.id }}" class="project-report-link">
+        <span class="project-report-emoji">{{ p.emoji }}</span>
+        <span class="project-report-title">{{ p.title }}</span>
+      </a>
+      <div class="project-report-stats muted">
+        {% if p.archived_at_label %}<span>Архив: {{ p.archived_at_label }}</span>{% endif %}
+        <span>За неделю: {{ p.n_done_week }}</span>
+        <span>Всего сделано: {{ p.n_done_all }}</span>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 {% endif %}
 {% endblock %}

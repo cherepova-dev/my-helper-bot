@@ -963,7 +963,8 @@ async def page_report_today(request: Request):
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     tasks = db.get_done_tasks_today(uid)
     db.attach_project_labels(uid, tasks)
-    text = _format_done_report_today(tasks, tz_name)
+    sched = db.list_routines_due_today(uid)
+    text = _format_done_report_today(tasks, tz_name, routines_scheduled=sched)
     body_html = report_text_to_html(text)
     return templates.TemplateResponse(
         request,
@@ -1564,14 +1565,14 @@ async def page_report_week(request: Request):
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
     db.attach_project_labels(uid, tasks)
-    habits = db.routine_completion_counts_between(uid, start_utc, end_utc)
-    habit_lines = [(str(r.get("text") or ""), int(r["c"])) for r in habits if r.get("c")]
+    raw_h = db.routine_completions_raw_between(uid, start_utc, end_utc)
     text = _format_done_report_week(
         tasks,
         tz_name,
         week_mon=mon,
         week_sun=sun,
-        habit_counts=habit_lines,
+        habit_completion_rows=raw_h,
+        user_id=uid,
     )
     body_html = report_text_to_html(text)
     return templates.TemplateResponse(
@@ -1589,29 +1590,63 @@ async def page_reports_projects(request: Request):
 
     uid = get_user_row(request)["id"]
     raw = db.list_projects(uid)
+    archived_raw = db.list_archived_projects(uid)
     counts = db.count_active_tasks_by_project(uid)
     w_start_utc, w_end_utc, w_mon, w_sun = db.user_calendar_week_bounds_utc(uid)
     week_lbl = f"{_format_date_human(w_mon)} — {_format_date_human(w_sun)}"
-    report_rows: list[dict] = []
-    for p in raw:
+    elapsed = db.elapsed_calendar_week_days_so_far(uid)
+
+    def _proj_row(p: dict) -> dict:
         pid = int(p["id"])
-        report_rows.append(
+        n_week = db.count_done_tasks_in_project_between(uid, pid, w_start_utc, w_end_utc)
+        n_act = counts.get(pid, 0)
+        pace_note = ""
+        if elapsed >= 1 and n_week >= elapsed:
+            pace_note = "Темп недели совпадает или выше числа прошедших дней — отличный ритм."
+        elif n_week > 0:
+            pace_note = "Есть движение на этой неделе — можно наращивать маленькими шагами."
+        return {
+            "id": pid,
+            "title": (p.get("title") or "").strip(),
+            "emoji": ((p.get("emoji") or "📁").strip() or "📁"),
+            "n_active": n_act,
+            "n_done_week": n_week,
+            "n_done_all": db.count_done_tasks_in_project_all(uid, pid),
+            "pace_note": pace_note,
+        }
+
+    report_rows = [_proj_row(p) for p in raw]
+    report_rows.sort(key=lambda r: (-r["n_done_week"], -r["n_active"], r["title"].lower()))
+    hot_projects = [r for r in report_rows if r["n_done_week"] > 0]
+    calm_projects = [r for r in report_rows if r["n_done_week"] == 0]
+
+    archived_rows: list[dict] = []
+    for p in archived_raw:
+        pid = int(p["id"])
+        ca = p.get("archived_at")
+        arch_lbl = ""
+        if ca:
+            raw_ca = str(ca).replace("Z", "")[:16]
+            arch_lbl = raw_ca.replace("T", " ") if "T" in raw_ca else raw_ca
+        archived_rows.append(
             {
-                "id": pid,
-                "title": (p.get("title") or "").strip(),
-                "emoji": ((p.get("emoji") or "📁").strip() or "📁"),
-                "n_active": counts.get(pid, 0),
-                "n_done_week": db.count_done_tasks_in_project_between(uid, pid, w_start_utc, w_end_utc),
-                "n_done_all": db.count_done_tasks_in_project_all(uid, pid),
+                **_proj_row(p),
+                "archived_at_label": arch_lbl,
             }
         )
+    archived_rows.sort(key=lambda r: (-r["n_done_all"], r["title"].lower()))
+
+    empty = len(report_rows) == 0 and len(archived_rows) == 0
     return templates.TemplateResponse(
         request,
         "reports_projects.html",
         _ctx(
-            report_rows=report_rows,
-            empty=len(report_rows) == 0,
+            hot_projects=hot_projects,
+            calm_projects=calm_projects,
+            archived_rows=archived_rows,
+            empty=empty,
             week_label=week_lbl,
+            week_day_elapsed=elapsed,
         ),
     )
 

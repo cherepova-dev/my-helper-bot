@@ -1581,6 +1581,12 @@ def user_calendar_week_bounds_utc(user_id: int) -> tuple[str, str, str, str]:
     return start_utc, end_utc, monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d")
 
 
+def elapsed_calendar_week_days_so_far(user_id: int) -> int:
+    """Сколько дней прошло с начала календарной недели (пн = 1, …, вс = 7)."""
+    _, wd = _get_today_in_user_tz(user_id)
+    return int(wd) + 1
+
+
 def _user_today_window_utc(user_id: int) -> tuple[str, str]:
     """Начало и конец «сегодня» пользователя в UTC (ISO), для отчётов и счётчиков."""
     today_str, _ = _get_today_in_user_tz(user_id)
@@ -1800,6 +1806,16 @@ def get_today_tasks(user_id: int) -> list[dict]:
                 continue
             result.append(t)
     return result
+
+
+def list_routines_due_today(user_id: int) -> list[dict]:
+    """Все активные рутины, для которых сегодня есть слот по repeat_day (включая уже сделанные)."""
+    today_str, today_weekday = _get_today_in_user_tz(user_id)
+    out: list[dict] = []
+    for t in get_routine_tasks(user_id):
+        if _routine_matches_today(t, today_weekday, today_str):
+            out.append(t)
+    return out
 
 
 def complete_task(task_id: int, user_id: int | None = None, task: dict | None = None) -> bool:
@@ -2219,6 +2235,20 @@ def routine_completion_counts_between(
         "INNER JOIN tasks t ON t.id = rc.task_id AND t.user_id = rc.user_id "
         "WHERE rc.user_id = %s AND rc.completed_at >= %s AND rc.completed_at < %s "
         "GROUP BY rc.task_id, t.text ORDER BY c DESC, t.text",
+        (user_id, start_utc, end_utc_exclusive),
+    )
+
+
+def routine_completions_raw_between(
+    user_id: int, start_utc: str, end_utc_exclusive: str
+) -> list[dict]:
+    """Строки журнала routine_completions за период (для отчётов: уникальные дни и т.п.)."""
+    return _fetchall(
+        "SELECT rc.task_id AS task_id, t.text AS text, rc.completed_at AS completed_at "
+        "FROM routine_completions rc "
+        "INNER JOIN tasks t ON t.id = rc.task_id AND t.user_id = rc.user_id "
+        "WHERE rc.user_id = %s AND rc.completed_at >= %s AND rc.completed_at < %s "
+        "ORDER BY rc.completed_at DESC",
         (user_id, start_utc, end_utc_exclusive),
     )
 

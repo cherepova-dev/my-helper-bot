@@ -1723,6 +1723,34 @@ pre.task-dump, pre.report {
   margin-top: 0.35rem;
   font-size: 0.88rem;
 }
+.report-insight-card {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(74, 142, 255, 0.35);
+  background: rgba(74, 142, 255, 0.08);
+}
+.report-insight-text {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+.report-project-section {
+  margin-bottom: 1rem;
+}
+.report-project-section .section-hint {
+  margin: -0.25rem 0 0.75rem;
+  font-size: 0.88rem;
+}
+.project-report-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.86rem;
+  color: var(--accent, #7eb6ff);
+  line-height: 1.35;
+}
+.report-project-section--archive .project-report-title {
+  font-weight: 500;
+}
 .project-stats-line { margin-bottom: 0.5rem; }
 .task-menu-row-move > .task-menu-label:first-child {
   margin-bottom: 0.35rem;

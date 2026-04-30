@@ -8,6 +8,7 @@
 import asyncio
 import logging
 import os
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -642,15 +643,28 @@ _REPORT_CATEGORY_ORDER = [
     ("📝", "Другое"),
 ]
 
+_BIG_PROJECTS_CAT = ("🧠", "Большие проекты")
 
-def _parse_completed_at(completed_at_str, tz_name: str = "Europe/Moscow"):
-    """Парсит completed_at (ISO, дата-время с пробелом или только YYYY-MM-DD) и возвращает datetime в TZ пользователя."""
-    if not completed_at_str:
+
+def _parse_completed_at(completed_at_val, tz_name: str = "Europe/Moscow"):
+    """Парсит completed_at (datetime из БД, ISO-строка и т.д.) → datetime в TZ пользователя."""
+    if completed_at_val is None:
         return None
     try:
-        if not isinstance(completed_at_str, str):
+        if isinstance(completed_at_val, datetime):
+            dt = completed_at_val
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if ZoneInfo:
+                try:
+                    tz = ZoneInfo(tz_name)
+                    return dt.astimezone(tz)
+                except Exception:
+                    return dt
+            return dt
+        if not isinstance(completed_at_val, str):
             return None
-        s = completed_at_str.strip().replace("Z", "+00:00")
+        s = completed_at_val.strip().replace("Z", "+00:00")
         if "T" not in s and " " in s:
             s = s.replace(" ", "T", 1)
         if "T" in s:
@@ -744,7 +758,150 @@ def _routine_rollup_entries(tasks: list[dict]) -> list[tuple[str, int]]:
     return out
 
 
-def _format_week_insight_lines(by_day: dict, n_tasks: int) -> list[str]:
+def _format_today_routines_block(
+    scheduled: list[dict],
+    done_tasks_today: list[dict],
+    tz_name: str,
+) -> str:
+    """Блок «рутины на сегодня»: по расписанию и отметки за день."""
+    done_ids = {int(t["id"]) for t in done_tasks_today if t.get("is_routine")}
+    if not scheduled and not done_ids:
+        return ""
+    lines = ["*🔁 Рутины на сегодня*", ""]
+    lines.append("_По расписанию (repeat_day) и что уже отмечено выполненным за этот день._")
+    lines.append("")
+    for t in sorted(scheduled, key=lambda x: (x.get("text") or "").lower()):
+        tid = int(t["id"])
+        txt = (t.get("text") or "").strip() or "—"
+        rd = t.get("repeat_day")
+        rd_disp = db.format_repeat_day_display(rd) if rd else ""
+        mark = "✓" if tid in done_ids else "○"
+        suffix = f" · _{rd_disp}_" if rd_disp else ""
+        ts = None
+        if tid in done_ids:
+            for d in done_tasks_today:
+                if int(d["id"]) == tid:
+                    ts = d.get("_use_completed_at") or d.get("completed_at") or d.get("last_completed_at")
+                    break
+        dt = _parse_completed_at(ts, tz_name) if ts else None
+        time_part = f" · _{_format_completed_time(dt).strip()}_" if dt else ""
+        lines.append(f"  {mark} *{txt}*{suffix}{time_part}")
+    orphans = done_ids - {int(t["id"]) for t in scheduled}
+    if orphans:
+        lines.append("")
+        lines.append("_Отмечено сегодня, но по расписанию слота не было (редкий случай):_")
+        for t in done_tasks_today:
+            if int(t["id"]) in orphans and t.get("is_routine"):
+                txt = (t.get("text") or "").strip() or "—"
+                ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+                dt = _parse_completed_at(ts, tz_name) if ts else None
+                tp = _format_completed_time(dt) if dt else ""
+                lines.append(f"  ✓ *{txt}*{tp}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _week_habit_journal_lines(
+    raw_rows: list[dict],
+    tz_name: str,
+    elapsed_week_days: int,
+) -> list[str]:
+    """Раздел привычек: уникальные календарные дни с отметкой + число записей в журнале."""
+    if not raw_rows:
+        return []
+    by_task: dict[int, dict] = {}
+    for r in raw_rows:
+        tid = int(r["task_id"])
+        if tid not in by_task:
+            by_task[tid] = {"text": str(r.get("text") or "").strip() or "—", "days": set(), "taps": 0}
+        by_task[tid]["taps"] += 1
+        dt = _parse_completed_at(r.get("completed_at"), tz_name)
+        if dt:
+            by_task[tid]["days"].add(dt.strftime("%Y-%m-%d"))
+    lines = ["*🌿 Привычки (журнал отметок)*", ""]
+    lines.append(
+        "_Неделя — календарная пн–вс; время и даты — в твоём часовом поясе. "
+        "«Дней с отметкой» — разные дни, когда была отметка (повторные нажатия в один день не увеличивают этот счёт)._"
+    )
+    lines.append(
+        f"_Сегодня *{elapsed_week_days}* {_plural_days_word(elapsed_week_days)} недели прошло "
+        f"(от понедельника до текущего дня)._"
+    )
+    lines.append("")
+    items = sorted(by_task.items(), key=lambda x: (-x[1]["taps"], x[1]["text"].lower()))
+    praise_any = False
+    for _tid, info in items:
+        text = info["text"]
+        nd = len(info["days"])
+        nt = info["taps"]
+        taps_note = ""
+        if nt > nd:
+            taps_note = f" · нажатий в журнале: *{nt}*"
+        lines.append(
+            f"  · *{text}* — *{nd}* {_plural_days_word(nd)} с отметкой{taps_note}"
+        )
+        if elapsed_week_days >= 1 and nd >= elapsed_week_days:
+            lines.append(
+                "    _🔥 Все прошедшие дни этой недели с отметкой — очень сильный ритм._"
+            )
+            praise_any = True
+        elif elapsed_week_days >= 3 and nd >= elapsed_week_days - 1 and nd > 0:
+            lines.append(
+                "    _Почти впритык к числу прошедших дней — отличный темп._"
+            )
+    if praise_any:
+        lines.append("")
+        lines.append("_Если цель «раз в день», а прошло меньше дней недели, чем максимум семь — это нормально: главное ритм._")
+    lines.append("")
+    return lines
+
+
+def _week_list_by_category_lines(tasks: list[dict], tz_name: str) -> list[str]:
+    """Плоский список задач недели, сгруппированный по категориям (с датой факта)."""
+    if not tasks:
+        return []
+    by_cat: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for t in tasks:
+        key = (t.get("category_emoji") or "📝", t.get("category_name") or "Другое")
+        by_cat[key].append(t)
+
+    def _sort_ts(row: dict) -> str:
+        return row.get("_use_completed_at") or row.get("completed_at") or row.get("last_completed_at") or ""
+
+    lines = ["*📂 Список по типам задач*", ""]
+    for emoji, name in _REPORT_CATEGORY_ORDER:
+        sub = by_cat.get((emoji, name), [])
+        if not sub:
+            continue
+        sub.sort(key=_sort_ts, reverse=True)
+        lines.append(f"{emoji} *{name}*")
+        for t in sub:
+            text = (t.get("text") or "").strip()
+            ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+            dt = _parse_completed_at(ts, tz_name)
+            routine_part = ""
+            if t.get("is_routine") and t.get("repeat_day"):
+                routine_part = f" 🔁 {db.format_repeat_day_display(t.get('repeat_day'))}"
+            elif t.get("is_routine"):
+                routine_part = " 🔁"
+            proj = ""
+            if t.get("project_title"):
+                pe = t.get("project_emoji") or "📁"
+                proj = f" · _{pe} {t['project_title']}_"
+            if dt:
+                fact = _format_completed_compact(dt)
+                lines.append(f"  ▸ {emoji} {text} · _{fact}_{routine_part}{proj}")
+            else:
+                lines.append(f"  ▸ {emoji} {text}{routine_part}{proj}")
+        lines.append("")
+    return lines
+
+
+def _format_week_insight_lines(
+    by_day: dict,
+    n_tasks: int,
+    elapsed_week_days: int = 7,
+) -> list[str]:
     """Короткий «анализ» недели без сложной аналитики."""
     lines = ["*📊 Неделя в двух словах*", ""]
     active_keys = [k for k in by_day if k != "_no_date_"]
@@ -767,9 +924,10 @@ def _format_week_insight_lines(by_day: dict, n_tasks: int) -> list[str]:
     )
     days_marked = len(counts)
     avg = n_tasks / max(days_marked, 1)
+    ew = max(1, min(int(elapsed_week_days), 7))
     lines.append(
         f"· В среднем *{avg:.1f}* задач на день с отметками "
-        f"(*{days_marked}* {_plural_days_word(days_marked)} из 7)."
+        f"(*{days_marked}* {_plural_days_word(days_marked)} из *{ew}* прошедших дней недели)."
     )
     if n_tasks >= 14:
         lines.append("· _Очень плотная неделя — много закрытых дел._")
@@ -782,13 +940,25 @@ def _format_week_insight_lines(by_day: dict, n_tasks: int) -> list[str]:
     return lines
 
 
-def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
-    """Отчёт за день: сводка, группировка по категориям, время выполнения, дружелюбный пустой."""
+def _format_done_report_today(
+    tasks: list[dict],
+    tz_name: str,
+    *,
+    routines_scheduled: list[dict] | None = None,
+) -> str:
+    """Отчёт за день: сводка, группировка по категориям; большие проекты — по проектам; блок рутин."""
+    sched = list(routines_scheduled or [])
     if not tasks:
-        return (
+        head = (
             "🔥 *Сделано сегодня*\n\n"
             "_Когда закроешь день, загляни сюда снова — увидишь, что уже сделано, и сможешь оценить баланс дел._\n\n"
-            "_Сегодня пока ни одной задачи не отмечено. План на сегодня ещё можно выполнить!_"
+        )
+        rb = _format_today_routines_block(sched, [], tz_name)
+        if rb:
+            return head + rb.rstrip() + "\n\n_Отметок по задачам пока нет — можно закрыть день по плану._"
+        return (
+            head
+            + "_Сегодня пока ни одной задачи не отмечено. План на сегодня ещё можно выполнить!_"
         )
     lines = ["🔥 *Сделано сегодня*", ""]
     lines.append(
@@ -796,14 +966,12 @@ def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
     )
     lines.append("")
     n = len(tasks)
-    cats = {}
+    cats: dict[tuple[str, str], list] = {}
     for t in tasks:
         emoji = t.get("category_emoji") or "📝"
         name = t.get("category_name") or "Другое"
         key = (emoji, name)
-        if key not in cats:
-            cats[key] = []
-        cats[key].append(t)
+        cats.setdefault(key, []).append(t)
     n_cats = len(cats)
     if n >= 8:
         lines.append(f"✨ *{n} задач за день* — сильный результат.")
@@ -836,18 +1004,60 @@ def _format_done_report_today(tasks: list[dict], tz_name: str) -> str:
             lines.extend(["· · · · ·", ""])
         first_block = False
         lines.append(f"{emoji} *{name}*")
-        for t in group:
-            text = (t.get("text") or "").strip()
-            ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
-            dt = _parse_completed_at(ts, tz_name)
-            time_str = _format_completed_time(dt) if dt else ""
-            routine_mark = " 🔁" if t.get("is_routine") else ""
-            proj = ""
-            if t.get("project_title"):
-                pe = t.get("project_emoji") or "📁"
-                proj = f" · _{pe} {t['project_title']}_"
-            lines.append(f"  ▸ {emoji} {text}{time_str}{routine_mark}{proj}")
-        lines.append("")
+        if (emoji, name) == _BIG_PROJECTS_CAT:
+            by_proj: dict[tuple[int, str, str], list] = defaultdict(list)
+            no_proj: list[dict] = []
+            for t in group:
+                pid = t.get("project_id")
+                if pid is not None:
+                    try:
+                        pk = int(pid)
+                    except (TypeError, ValueError):
+                        no_proj.append(t)
+                        continue
+                    title = (t.get("project_title") or "Проект").strip() or "Проект"
+                    pem = (t.get("project_emoji") or "📁").strip() or "📁"
+                    by_proj[(pk, title, pem)].append(t)
+                else:
+                    no_proj.append(t)
+            sorted_keys = sorted(by_proj.keys(), key=lambda x: x[1].lower())
+            for _pk, title, pem in sorted_keys:
+                sub = by_proj[(_pk, title, pem)]
+                lines.append(f"  *{pem} {title}*")
+                for t in sub:
+                    text = (t.get("text") or "").strip()
+                    ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+                    dt = _parse_completed_at(ts, tz_name)
+                    time_str = _format_completed_time(dt) if dt else ""
+                    routine_mark = " 🔁" if t.get("is_routine") else ""
+                    lines.append(f"    ▸ {emoji} {text}{time_str}{routine_mark}")
+                lines.append("")
+            if no_proj:
+                lines.append("  _Без привязки к проекту_")
+                for t in no_proj:
+                    text = (t.get("text") or "").strip()
+                    ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+                    dt = _parse_completed_at(ts, tz_name)
+                    time_str = _format_completed_time(dt) if dt else ""
+                    routine_mark = " 🔁" if t.get("is_routine") else ""
+                    lines.append(f"    ▸ {emoji} {text}{time_str}{routine_mark}")
+                lines.append("")
+        else:
+            for t in group:
+                text = (t.get("text") or "").strip()
+                ts = t.get("_use_completed_at") or t.get("completed_at") or t.get("last_completed_at")
+                dt = _parse_completed_at(ts, tz_name)
+                time_str = _format_completed_time(dt) if dt else ""
+                routine_mark = " 🔁" if t.get("is_routine") else ""
+                proj = ""
+                if t.get("project_title"):
+                    pe = t.get("project_emoji") or "📁"
+                    proj = f" · _{pe} {t['project_title']}_"
+                lines.append(f"  ▸ {emoji} {text}{time_str}{routine_mark}{proj}")
+            lines.append("")
+    rb = _format_today_routines_block(sched, tasks, tz_name)
+    if rb:
+        lines.extend(["· · · · ·", "", rb.rstrip(), ""])
     lines.append("*🎯 Зачем смотреть отчёт*")
     lines.append("_Подкрепить ощущение «я молодец» и заметить, не уходит ли всё в один тип дел._")
     return "\n".join(lines).rstrip()
@@ -872,11 +1082,13 @@ def _format_done_report_week(
     *,
     week_mon: str | None = None,
     week_sun: str | None = None,
-    habit_counts: list[tuple[str, int]] | None = None,
+    habit_completion_rows: list[dict] | None = None,
+    user_id: int | None = None,
 ) -> str:
-    """Отчёт за календарную неделю (пн–вс): сводка, по дням, привычки по журналу отметок."""
+    """Отчёт за календарную неделю (пн–вс): сводка, по дням, привычки, список по типам."""
     wk = _calendar_week_range_pretty(week_mon, week_sun)
     wk_line = f" ({wk})" if wk else ""
+    elapsed_days = db.elapsed_calendar_week_days_so_far(user_id) if user_id is not None else 7
     if not tasks:
         return (
             f"🔥 *Сделано за неделю*{wk_line}\n\n"
@@ -887,7 +1099,12 @@ def _format_done_report_week(
         )
     lines = [f"🔥 *Сделано за неделю*{wk_line}", ""]
     lines.append(
-        "_Календарная неделя (пн–вс). Срез помогает почувствовать темп и спланировать следующую неделю._"
+        "_Календарная неделя (пн–вс): диапазон дат — весь интервал от понедельника до воскресенья, "
+        "но закрытые дела и привычки ниже — только то, что уже произошло по твоему времени._"
+    )
+    lines.append(
+        "_Число прошедших дней с понедельника до «сегодня» помогает честно сравнивать ритм с рутинами "
+        f"(сейчас это *{elapsed_days}* {_plural_days_word(elapsed_days)})._"
     )
     lines.append("")
     n = len(tasks)
@@ -942,14 +1159,9 @@ def _format_done_report_week(
         for disp, c in roll:
             lines.append(f"  · *{disp}* ×{c}")
         lines.append("")
-    if habit_counts:
-        lines.append("*🌿 Привычки (рутины)*")
-        lines.append("_Сколько раз нажала «выполнено» по каждой рутине — по журналу отметок._")
-        lines.append("")
-        for name, c in habit_counts:
-            nm = (name or "").strip() or "—"
-            lines.append(f"  · *{nm}* — *{c}* {_plural_times_word(c)}")
-        lines.append("")
+    hlines = _week_habit_journal_lines(habit_completion_rows or [], tz_name, elapsed_days)
+    if hlines:
+        lines.extend(hlines)
     day_keys = sorted([k for k in by_day.keys() if k != "_no_date_"], reverse=True)
     if "_no_date_" in by_day:
         day_keys.append("_no_date_")
@@ -995,7 +1207,8 @@ def _format_done_report_week(
                 else:
                     lines.append(f"    ▸ {emoji} {text}{routine_part}{proj}")
         lines.append("")
-    lines.extend(_format_week_insight_lines(by_day, n))
+    lines.extend(_week_list_by_category_lines(tasks, tz_name))
+    lines.extend(_format_week_insight_lines(by_day, n, elapsed_days))
     lines.append("")
     lines.append("*🎯 Итог*")
     lines.append("_Ты уже проделала работу — отчёт лишь делает её видимой. Используй его, как подсказку, а не как оценку «хорошо/плохо»._")
@@ -1018,10 +1231,12 @@ def _format_done_report(tasks: list[dict], title: str) -> str:
 async def cmd_done_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     user_row = db.get_or_create_user(user.id, user.first_name or "")
-    tasks = db.get_done_tasks_today(user_row["id"])
-    db.attach_project_labels(user_row["id"], tasks)
+    uid = user_row["id"]
+    tasks = db.get_done_tasks_today(uid)
+    db.attach_project_labels(uid, tasks)
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-    text = _format_done_report_today(tasks, tz_name)
+    sched = db.list_routines_due_today(uid)
+    text = _format_done_report_today(tasks, tz_name, routines_scheduled=sched)
     await _reply(update, text)
 
 
@@ -1032,14 +1247,14 @@ async def cmd_done_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
     db.attach_project_labels(uid, tasks)
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-    habits = db.routine_completion_counts_between(uid, start_utc, end_utc)
-    habit_lines = [(str(r.get("text") or ""), int(r["c"])) for r in habits if r.get("c")]
+    raw_h = db.routine_completions_raw_between(uid, start_utc, end_utc)
     text = _format_done_report_week(
         tasks,
         tz_name,
         week_mon=mon,
         week_sun=sun,
-        habit_counts=habit_lines,
+        habit_completion_rows=raw_h,
+        user_id=uid,
     )
     await _reply(update, text)
 
@@ -1371,7 +1586,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         tasks = db.get_done_tasks_today(uid)
         db.attach_project_labels(uid, tasks)
         tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-        await _reply(update, _format_done_report_today(tasks, tz_name))
+        sched = db.list_routines_due_today(uid)
+        await _reply(update, _format_done_report_today(tasks, tz_name, routines_scheduled=sched))
         return
 
     # Синонимы: сделано за неделю
@@ -1380,8 +1596,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
         db.attach_project_labels(uid, tasks)
         tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-        habits = db.routine_completion_counts_between(uid, start_utc, end_utc)
-        habit_lines = [(str(r.get("text") or ""), int(r["c"])) for r in habits if r.get("c")]
+        raw_h = db.routine_completions_raw_between(uid, start_utc, end_utc)
         await _reply(
             update,
             _format_done_report_week(
@@ -1389,7 +1604,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 tz_name,
                 week_mon=mon,
                 week_sun=sun,
-                habit_counts=habit_lines,
+                habit_completion_rows=raw_h,
+                user_id=uid,
             ),
         )
         return
@@ -1502,7 +1718,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         tasks = db.get_done_tasks_today(uid)
         db.attach_project_labels(uid, tasks)
         tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-        await _reply(update, _format_done_report_today(tasks, tz_name))
+        sched = db.list_routines_due_today(uid)
+        await _reply(update, _format_done_report_today(tasks, tz_name, routines_scheduled=sched))
         return
 
     if _match_synonym(text, SYN_DONE_WEEK):
@@ -1510,8 +1727,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
         db.attach_project_labels(uid, tasks)
         tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-        habits = db.routine_completion_counts_between(uid, start_utc, end_utc)
-        habit_lines = [(str(r.get("text") or ""), int(r["c"])) for r in habits if r.get("c")]
+        raw_h = db.routine_completions_raw_between(uid, start_utc, end_utc)
         await _reply(
             update,
             _format_done_report_week(
@@ -1519,7 +1735,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 tz_name,
                 week_mon=mon,
                 week_sun=sun,
-                habit_counts=habit_lines,
+                habit_completion_rows=raw_h,
+                user_id=uid,
             ),
         )
         return
