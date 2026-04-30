@@ -1751,6 +1751,42 @@ pre.task-dump, pre.report {
 .toolbar-sub a { text-decoration: none; }
 .toolbar-sub a:hover { text-decoration: underline; }
 
+.projects-intro-lead {
+  font-weight: 600;
+  font-size: 1.06rem;
+  margin: 0 0 0.4rem;
+  color: var(--fg);
+}
+.projects-intro-body {
+  margin: 0 0 1.25rem;
+  line-height: 1.5;
+  max-width: 38rem;
+}
+.projects-intro-body em {
+  font-style: italic;
+  color: var(--fg);
+  opacity: 0.95;
+}
+.projects-page-footer {
+  margin-top: 1.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.projects-archive-link {
+  display: inline-block;
+  padding: 0.5rem 0;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.93rem;
+}
+.projects-archive-link:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+.projects-archive-link--has {
+  color: var(--accent);
+}
+
 .project-list {
   list-style: none;
   margin: 0;
