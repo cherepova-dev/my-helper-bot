@@ -102,3 +102,27 @@ def test_plan_autoplaces_routine_with_time_bucket_only(client):
     r = client.get("/plan?date=2026-05-05")
     assert r.status_code == 200
     assert "разминка" in r.text
+
+
+def test_plan_autoplaces_routine_estimate_only(client):
+    """Рутина ежедневно только с оценкой 5 мин — автослот от начала сетки (9:00)."""
+    _signup(client)
+    import db
+
+    u = db.find_user_by_email("user@example.com")
+    assert u
+    row = db.add_task(
+        user_id=u["id"],
+        text="заправить постель",
+        category_emoji="🔁",
+        category_name="Быт",
+        is_routine=True,
+        repeat_day="ежедневно",
+        time_of_day=None,
+    )
+    assert row
+    db.set_task_estimate(u["id"], int(row["id"]), 5)
+
+    r = client.get("/plan?date=2026-05-06")
+    assert r.status_code == 200
+    assert "заправить постель" in r.text

@@ -1207,20 +1207,34 @@ pre.task-dump, pre.report {
 
 .plan-strip-hint { margin-bottom: 0.35rem; }
 
+.plan-grid-card {
+  max-width: 100%;
+  overflow-x: clip;
+  box-sizing: border-box;
+}
+
 .plan-schedule-strip {
   display: flex;
   gap: 0.75rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
+  overflow-y: visible;
   scroll-snap-type: x mandatory;
+  scroll-padding-inline: 0.35rem;
   padding: 0.25rem 0 0.75rem;
   margin-top: 0.35rem;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .plan-period-panel {
-  flex: 0 0 min(100%, 26rem);
+  flex: 0 0 100%;
+  width: 100%;
+  max-width: 100%;
   scroll-snap-align: start;
-  min-width: min(calc(100vw - 2.5rem), 22rem);
+  scroll-snap-stop: always;
   padding: 0.65rem 0.75rem 0.85rem;
   box-sizing: border-box;
 }
@@ -1247,11 +1261,15 @@ pre.task-dump, pre.report {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     scroll-snap-type: none;
+    scroll-padding-inline: 0;
   }
   .plan-period-panel {
     flex: unset;
+    width: auto;
+    max-width: none;
     min-width: 0;
     scroll-snap-align: unset;
+    scroll-snap-stop: normal;
   }
 }
 

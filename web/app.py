@@ -1109,7 +1109,8 @@ async def action_project_unarchive(request: Request, project_id: int):
 
 # ── Планирование дня ─────────────────────────────────────────────────────
 
-PLAN_DAY_START_MIN = 6 * 60   # 06:00
+# Нижняя граница сетки по умолчанию (реальное значение — plan_grid_start_min в настройках, см. _user_plan_grid_start_min)
+PLAN_DAY_START_MIN = 6 * 60
 PLAN_DAY_END_MIN = 24 * 60    # 24:00 (показываем сетку до полуночи)
 PLAN_SLOT_STEP_MIN = 15
 # Высота одной ячейки сетки (15 мин): больше — лучше читается текст в слотах
@@ -1206,8 +1207,9 @@ def _plan_find_gap_start(
     duration: int,
     earliest: int,
     latest_end: int,
+    day_floor: int,
 ) -> int | None:
-    pos = max(earliest, PLAN_DAY_START_MIN)
+    pos = max(earliest, day_floor)
     for a, b in merged:
         if pos + duration <= a:
             return pos
@@ -1217,11 +1219,24 @@ def _plan_find_gap_start(
     return None
 
 
+def _user_plan_grid_start_min(uid: int) -> int:
+    """Начало сетки планировщика и нижняя граница автослотов (минуты от полуночи)."""
+    s = db.get_settings(uid)
+    raw = s.get("plan_grid_start_min", db.DEFAULT_SETTINGS.get("plan_grid_start_min", 540))
+    try:
+        g = int(raw)
+    except (TypeError, ValueError):
+        g = 540
+    g = max(0, min(g, 23 * 60 + 55))
+    return (g // 5) * 5
+
+
 def _plan_auto_place_backlog(uid: int, date_str: str) -> dict[str, str | bool]:
     """Ставит в план задачи бэклога дня подряд, длительность из estimate_min (или 30 мин)."""
     from bot_v2 import _task_time_bucket
 
-    db.ensure_plan_slots_from_due_time(uid, date_str)
+    gs = _user_plan_grid_start_min(uid)
+    db.ensure_plan_slots_from_due_time(uid, date_str, gs)
 
     slots = db.get_plan_slots(uid, date_str)
     planned_ids = {int(s["task_id"]) for s in slots}
@@ -1250,7 +1265,7 @@ def _plan_auto_place_backlog(uid: int, date_str: str) -> dict[str, str | bool]:
         dur = max(5, min(dur_raw, 24 * 60 - 1))
         if dur % 5:
             dur += 5 - (dur % 5)
-        start = _plan_find_gap_start(merged, dur, PLAN_DAY_START_MIN, PLAN_DAY_END_MIN)
+        start = _plan_find_gap_start(merged, dur, gs, PLAN_DAY_END_MIN, gs)
         if start is None:
             skipped += 1
             continue
@@ -1276,6 +1291,7 @@ async def page_plan(request: Request):
     from datetime import date as _date, timedelta as _td
 
     uid = get_user_row(request)["id"]
+    gs = _user_plan_grid_start_min(uid)
     today_str = db.user_local_date_offset(uid, 0)
     raw_date = (request.query_params.get("date") or "").strip() or today_str
     try:
@@ -1286,7 +1302,7 @@ async def page_plan(request: Request):
     prev_date = (d - _td(days=1)).strftime("%Y-%m-%d")
     next_date = (d + _td(days=1)).strftime("%Y-%m-%d")
 
-    db.ensure_plan_slots_from_due_time(uid, date_str)
+    db.ensure_plan_slots_from_due_time(uid, date_str, gs)
 
     slots = db.get_plan_slots(uid, date_str)
     planned_task_ids = {int(s["task_id"]) for s in slots}
@@ -1355,7 +1371,7 @@ async def page_plan(request: Request):
         )
 
     grid_rows: list[dict] = []
-    for m in range(PLAN_DAY_START_MIN, PLAN_DAY_END_MIN, PLAN_SLOT_STEP_MIN):
+    for m in range(gs, PLAN_DAY_END_MIN, PLAN_SLOT_STEP_MIN):
         grid_rows.append(
             {
                 "start_min": m,
@@ -1372,11 +1388,21 @@ async def page_plan(request: Request):
     vgap = PLAN_SLOT_VERTICAL_GAP_PX
 
     plan_periods: list[dict] = []
-    period_defs = [
-        ("morning", "🌅 Утро", PLAN_DAY_START_MIN, PLAN_MORNING_END_MIN, "plan-period-panel--morning"),
-        ("day", "☀️ День", PLAN_MORNING_END_MIN, PLAN_DAY_END_MIN_BAND, "plan-period-panel--day"),
-        ("evening", "🌆 Вечер", PLAN_DAY_END_MIN_BAND, PLAN_DAY_END_MIN, "plan-period-panel--evening"),
-    ]
+    period_defs: list[tuple[str, str, int, int, str]] = []
+    if gs < PLAN_MORNING_END_MIN:
+        period_defs.append(
+            ("morning", "🌅 Утро", gs, PLAN_MORNING_END_MIN, "plan-period-panel--morning")
+        )
+    day_lo = max(gs, PLAN_MORNING_END_MIN)
+    if day_lo < PLAN_DAY_END_MIN_BAND:
+        period_defs.append(
+            ("day", "☀️ День", day_lo, PLAN_DAY_END_MIN_BAND, "plan-period-panel--day")
+        )
+    eve_lo = max(gs, PLAN_DAY_END_MIN_BAND)
+    if eve_lo < PLAN_DAY_END_MIN:
+        period_defs.append(
+            ("evening", "🌆 Вечер", eve_lo, PLAN_DAY_END_MIN, "plan-period-panel--evening")
+        )
     for pkey, ptitle, p0, p1, panel_class in period_defs:
         prow = []
         for m in range(p0, p1, step):
@@ -1428,8 +1454,9 @@ async def page_plan(request: Request):
             plan_periods=plan_periods,
             slot_step_min=PLAN_SLOT_STEP_MIN,
             plan_row_px=PLAN_ROW_HEIGHT_PX,
-            day_start_min=PLAN_DAY_START_MIN,
+            day_start_min=gs,
             day_end_min=PLAN_DAY_END_MIN,
+            plan_grid_range_label=f"{_format_min_as_hhmm(gs)}–24:00",
             duration_presets=PLAN_DURATION_PRESETS,
             total_planned_min=total_planned,
             total_planned_label=_humanize_minutes(total_planned),
@@ -1757,10 +1784,22 @@ async def page_settings(request: Request):
         "America/New_York",
         "UTC",
     )
+    try:
+        gsm = int(s.get("plan_grid_start_min", db.DEFAULT_SETTINGS["plan_grid_start_min"]))
+    except (TypeError, ValueError):
+        gsm = int(db.DEFAULT_SETTINGS["plan_grid_start_min"])
+    gsm = max(0, min(gsm, 23 * 60 + 55))
+    gsm = (gsm // 5) * 5
+    plan_grid_start_value = _format_min_as_hhmm(gsm)
     return templates.TemplateResponse(
         request,
         "settings.html",
-        _ctx(max_tasks_per_day=n, timezone_current=tz_cur, timezone_examples=tz_examples),
+        _ctx(
+            max_tasks_per_day=n,
+            timezone_current=tz_cur,
+            timezone_examples=tz_examples,
+            plan_grid_start_value=plan_grid_start_value,
+        ),
     )
 
 
@@ -1769,6 +1808,7 @@ async def action_settings(
     request: Request,
     max_tasks_per_day: str = Form("7"),
     timezone: str = Form(""),
+    plan_grid_start: str = Form("09:00"),
 ):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
@@ -1778,7 +1818,12 @@ async def action_settings(
     except (TypeError, ValueError):
         n = 7
     n = max(1, min(50, n))
-    db.update_settings(uid, max_tasks_per_day=n)
+    pm = _parse_hhmm_to_min(plan_grid_start)
+    if pm is None:
+        pm = int(db.DEFAULT_SETTINGS["plan_grid_start_min"])
+    pm = max(0, min(pm, 23 * 60 + 55))
+    pm = (pm // 5) * 5
+    db.update_settings(uid, max_tasks_per_day=n, plan_grid_start_min=pm)
     tz_raw = (timezone or "").strip()
     if tz_raw:
         if not db.set_user_timezone(uid, tz_raw):

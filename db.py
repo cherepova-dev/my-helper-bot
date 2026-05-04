@@ -620,6 +620,7 @@ def set_user_timezone(user_id: int, tz_name: str) -> bool:
 DEFAULT_SETTINGS = {
     "max_tasks_per_day": 7,
     "auto_schedule": True,
+    "plan_grid_start_min": 540,  # 09:00 — начало сетки планировщика и якорь автослотов
 }
 
 
@@ -2031,8 +2032,8 @@ def _due_time_to_start_min(due_time: str | None) -> int | None:
     return h * 60 + m
 
 
-def _routine_time_of_day_default_start_min(time_of_day: str | None) -> int | None:
-    """Якорное время для рутины только с блоком суток (без точного due_time)."""
+def _time_of_day_default_start_min(time_of_day: str | None) -> int | None:
+    """Якорное время по блоку суток (утро/день/вечер), если нет точного due_time."""
     tod = (time_of_day or "").strip().lower()
     return {
         "утро": 8 * 60,
@@ -2042,13 +2043,29 @@ def _routine_time_of_day_default_start_min(time_of_day: str | None) -> int | Non
     }.get(tod)
 
 
-def _preferred_plan_start_min(task: dict) -> int | None:
+def _preferred_plan_start_min(task: dict, grid_start_min: int) -> int | None:
     sm = _due_time_to_start_min(task.get("due_time"))
     if sm is not None:
         return sm
-    if task.get("is_routine"):
-        return _routine_time_of_day_default_start_min(task.get("time_of_day"))
+    td = _time_of_day_default_start_min(task.get("time_of_day"))
+    if td is not None:
+        return td
+    est = int(task.get("estimate_min") or 0)
+    if est >= 5:
+        return int(grid_start_min)
     return None
+
+
+def _ensure_plan_sort_key(t: dict, grid_start_min: int) -> tuple:
+    pref = _preferred_plan_start_min(t, grid_start_min)
+    has_exact = _due_time_to_start_min(t.get("due_time")) is not None
+    if pref is None:
+        return (2, 99999, int(t["id"]))
+    return (
+        0 if has_exact else 1,
+        pref,
+        int(t["id"]),
+    )
 
 
 def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -2085,41 +2102,47 @@ def _find_gap_start_min(
     return None
 
 
-def ensure_plan_slots_from_due_time(user_id: int, date_str: str) -> int:
-    """Создаёт слоты для задач дня без слота: по точному due_time или по блоку суток у рутины.
+def ensure_plan_slots_from_due_time(
+    user_id: int, date_str: str, grid_start_min: int | None = None
+) -> int:
+    """Создаёт слоты для задач дня без слота.
+
+    Учитывает: точное due_time; блок суток (любая задача); оценку ≥ 5 мин — якорь = начало сетки.
 
     Длительность: estimate_min, если ≥ 5 мин, иначе 30 мин; кратность 5 мин.
-    Нижняя граница дня плана — 06:00. Если желаемое время занято, ищется ближайший
-    свободный промежуток от предпочтительного времени (без наложений).
-    Возвращает число созданных слотов.
+    Нижняя граница дня — из настроек plan_grid_start_min (по умолчанию 9:00).
+    Если желаемое время занято, ищется ближайший свободный промежуток.
     """
-    plan_day_start_min = 6 * 60
+    if grid_start_min is None:
+        gs_raw = get_settings(user_id).get(
+            "plan_grid_start_min", DEFAULT_SETTINGS["plan_grid_start_min"]
+        )
+        try:
+            grid_start_min = int(gs_raw)
+        except (TypeError, ValueError):
+            grid_start_min = int(DEFAULT_SETTINGS["plan_grid_start_min"])
+    grid_start_min = max(0, min(int(grid_start_min), 23 * 60 + 55))
+    grid_start_min = (grid_start_min // 5) * 5
+
+    plan_day_start_min = grid_start_min
     day_end_min = 24 * 60
     slots = get_plan_slots(user_id, date_str)
     planned = {int(s["task_id"]) for s in slots}
     intervals = [
         (int(s["start_min"]), int(s["start_min"]) + int(s["duration_min"])) for s in slots
     ]
-    merged = _merge_intervals(intervals)
 
     day_tasks = get_tasks_for_date(user_id, date_str)
 
-    def _sort_key(t: dict) -> tuple:
-        pref = _preferred_plan_start_min(t)
-        has_exact = _due_time_to_start_min(t.get("due_time")) is not None
-        return (
-            0 if has_exact else 1,
-            pref if pref is not None else 99999,
-            int(t["id"]),
-        )
-
-    day_tasks_sorted = sorted(day_tasks, key=_sort_key)
+    day_tasks_sorted = sorted(
+        day_tasks, key=lambda t: _ensure_plan_sort_key(t, grid_start_min)
+    )
     created = 0
     for t in day_tasks_sorted:
         tid = int(t["id"])
         if tid in planned:
             continue
-        preferred = _preferred_plan_start_min(t)
+        preferred = _preferred_plan_start_min(t, grid_start_min)
         if preferred is None:
             continue
         preferred = max(int(preferred), plan_day_start_min)

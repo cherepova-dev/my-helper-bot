@@ -19,6 +19,11 @@
   </label>
   <h2 class="home-section-title">Планирование</h2>
   <label class="settings-field">
+    <span class="settings-label">Начало дня в планировщике</span>
+    <span class="muted settings-hint">С какого времени рисуется сетка и откуда ставятся автослоты для задач только с оценкой минут (без точного времени и без блока утро/день/вечер). По умолчанию 9:00.</span>
+    <input type="time" name="plan_grid_start" step="300" value="{{ plan_grid_start_value }}" class="composer-input input-narrow" aria-label="Начало сетки плана">
+  </label>
+  <label class="settings-field">
     <span class="settings-label">Максимум задач в день</span>
     <span class="muted settings-hint">При автоподборе даты новые задачи попадают на первый день, где активных задач меньше этого числа (по умолчанию 7).</span>
     <input type="number" name="max_tasks_per_day" min="1" max="50" value="{{ max_tasks_per_day }}" required class="composer-input input-narrow">

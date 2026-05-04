@@ -110,7 +110,7 @@
 
   <section class="card plan-grid-card">
     <h2 class="home-section-title">Расписание дня</h2>
-    <p class="muted plan-tod-hint plan-strip-hint">Листай вправо: <span class="plan-legend plan-legend--morning">утро</span>, <span class="plan-legend plan-legend--day">день</span>, <span class="plan-legend plan-legend--evening">вечер</span>. Сетка {{ slot_step_min }} мин (06:00–24:00), внутри ячейки — деления по 5 мин.</p>
+    <p class="muted plan-tod-hint plan-strip-hint">Листай вправо (на телефоне — по одной колонке): <span class="plan-legend plan-legend--morning">утро</span>, <span class="plan-legend plan-legend--day">день</span>, <span class="plan-legend plan-legend--evening">вечер</span>. Сетка {{ slot_step_min }} мин ({{ plan_grid_range_label }}), внутри ячейки — деления по 5 мин. Начало сетки меняется в «Настройки».</p>
     <div class="plan-schedule-strip" role="region" aria-label="Расписание по частям дня">
       {% for period in plan_periods %}
       <div class="plan-period-panel card {{ period.panel_class }}" data-period="{{ period.key }}">
