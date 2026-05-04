@@ -78,3 +78,27 @@ def test_reports_projects_after_login(client):
     r = client.get("/reports/projects")
     assert r.status_code == 200
     assert "проект" in r.text.lower()
+
+
+def test_plan_autoplaces_routine_with_time_bucket_only(client):
+    """Рутина без due_time, только блок «утро» — попадает в план при открытии /plan."""
+    _signup(client)
+    import db
+
+    u = db.find_user_by_email("user@example.com")
+    assert u
+    row = db.add_task(
+        user_id=u["id"],
+        text="разминка",
+        category_emoji="🔁",
+        category_name="Спорт",
+        is_routine=True,
+        repeat_day="ежедневно",
+        time_of_day="утро",
+    )
+    assert row
+    db.set_task_estimate(u["id"], int(row["id"]), 10)
+
+    r = client.get("/plan?date=2026-05-05")
+    assert r.status_code == 200
+    assert "разминка" in r.text

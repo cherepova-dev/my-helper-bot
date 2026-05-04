@@ -1205,53 +1205,105 @@ pre.task-dump, pre.report {
 .plan-other-tasks { margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
 .plan-other-summary { cursor: pointer; padding: 0.4rem 0; }
 
+.plan-strip-hint { margin-bottom: 0.35rem; }
+
+.plan-schedule-strip {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 0.25rem 0 0.75rem;
+  margin-top: 0.35rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.plan-period-panel {
+  flex: 0 0 min(100%, 26rem);
+  scroll-snap-align: start;
+  min-width: min(calc(100vw - 2.5rem), 22rem);
+  padding: 0.65rem 0.75rem 0.85rem;
+  box-sizing: border-box;
+}
+
+.plan-period-heading {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.plan-period-panel--morning {
+  background: linear-gradient(180deg, rgba(120, 190, 255, 0.14) 0%, var(--card) 48%);
+}
+.plan-period-panel--day {
+  background: linear-gradient(180deg, rgba(255, 150, 190, 0.11) 0%, var(--card) 48%);
+}
+.plan-period-panel--evening {
+  background: linear-gradient(180deg, rgba(170, 140, 255, 0.12) 0%, var(--card) 48%);
+}
+
+@media (min-width: 1100px) {
+  .plan-schedule-strip {
+    overflow-x: visible;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    scroll-snap-type: none;
+  }
+  .plan-period-panel {
+    flex: unset;
+    min-width: 0;
+    scroll-snap-align: unset;
+  }
+}
+
 .plan-grid {
   position: relative;
-  margin-top: 0.5rem;
-  padding-left: 56px;
+  margin-top: 0.35rem;
+  padding-left: 3.25rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--card);
+  background: rgba(0, 0, 0, 0.12);
   min-height: 300px;
-  --plan-row-h: 18px;
+  --plan-row-h: 44px;
 }
-.plan-grid-band {
-  position: absolute;
-  left: 56px;
-  right: 8px;
-  pointer-events: none;
-  z-index: 0;
-  border-radius: 4px;
-}
-.plan-grid-band--morning { background: rgba(120, 190, 255, 0.12); }
-.plan-grid-band--day { background: rgba(255, 150, 190, 0.09); }
-.plan-grid-band--evening { background: rgba(170, 140, 255, 0.1); }
 .plan-grid-row {
   position: absolute;
   left: 0;
   right: 0;
-  height: var(--plan-row-h, 18px);
-  border-top: 1px solid rgba(127, 127, 127, 0.15);
+  height: var(--plan-row-h, 44px);
+  border-top: 1px solid rgba(127, 127, 127, 0.22);
   pointer-events: none;
+  box-sizing: border-box;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0 calc(33.333% - 0.5px),
+    rgba(127, 127, 127, 0.09) calc(33.333% - 0.5px) calc(33.333% + 0.5px),
+    transparent calc(33.333% + 0.5px) calc(66.666% - 0.5px),
+    rgba(127, 127, 127, 0.09) calc(66.666% - 0.5px) calc(66.666% + 0.5px),
+    transparent calc(66.666% + 0.5px) 100%
+  );
 }
-.plan-grid-row--hour { border-top-color: rgba(127, 127, 127, 0.45); }
+.plan-grid-row--hour { border-top-color: rgba(127, 127, 127, 0.5); }
 .plan-grid-time {
   position: absolute;
-  left: 8px;
-  top: -8px;
-  font-size: 0.75rem;
+  left: 6px;
+  top: -9px;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
   background: var(--card);
   padding: 0 4px;
+  max-width: 3rem;
 }
 .plan-slot {
   position: absolute;
-  left: 60px;
-  right: 8px;
+  left: 3.35rem;
+  right: 6px;
   border-radius: 8px;
   background: rgba(74, 142, 255, 0.18);
   border: 1px solid rgba(74, 142, 255, 0.5);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   z-index: 2;
+  box-sizing: border-box;
 }
 .plan-auto-row {
   margin-top: 0.75rem;
@@ -1276,7 +1328,6 @@ pre.task-dump, pre.report {
 .plan-legend--morning { background: rgba(120, 190, 255, 0.28); color: var(--fg); }
 .plan-legend--day { background: rgba(255, 150, 190, 0.22); color: var(--fg); }
 .plan-legend--evening { background: rgba(170, 140, 255, 0.26); color: var(--fg); }
-.plan-slot[open] { z-index: 3; }
 .plan-slot.color-red    { background: rgba(226, 85, 85, 0.20); border-color: #e25555; }
 .plan-slot.color-orange { background: rgba(230, 150, 75, 0.20); border-color: #e6964b; }
 .plan-slot.color-yellow { background: rgba(217, 195, 80, 0.22); border-color: #d9c350; }
@@ -1287,19 +1338,34 @@ pre.task-dump, pre.report {
 .plan-slot-summary {
   list-style: none;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 6px 8px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem 0.6rem;
-  align-items: center;
-  font-size: 0.85rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+  font-size: 0.88rem;
   color: var(--fg);
+  min-height: 100%;
+  box-sizing: border-box;
 }
 .plan-slot-summary::-webkit-details-marker { display: none; }
-.plan-slot-time { font-weight: 600; font-variant-numeric: tabular-nums; }
-.plan-slot-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.plan-slot-dur { font-size: 0.75rem; }
-.plan-slot[open] { height: auto !important; min-height: 200px; }
+.plan-slot-time {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  opacity: 0.92;
+}
+.plan-slot-text {
+  flex: 1 1 auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: 0.98rem;
+  line-height: 1.28;
+  font-weight: 550;
+}
+.plan-slot-dur { font-size: 0.72rem; opacity: 0.85; }
+.plan-slot[open] { height: auto !important; min-height: 14rem; z-index: 5; }
 .plan-slot-actions { padding: 0.5rem 0.7rem 0.7rem; background: var(--card); }
 .plan-slot-remove { margin-top: 0.5rem; }
 

@@ -1112,7 +1112,9 @@ async def action_project_unarchive(request: Request, project_id: int):
 PLAN_DAY_START_MIN = 6 * 60   # 06:00
 PLAN_DAY_END_MIN = 24 * 60    # 24:00 (показываем сетку до полуночи)
 PLAN_SLOT_STEP_MIN = 15
-PLAN_ROW_HEIGHT_PX = 18
+# Высота одной ячейки сетки (15 мин): больше — лучше читается текст в слотах
+PLAN_ROW_HEIGHT_PX = 44
+PLAN_SLOT_VERTICAL_GAP_PX = 8
 PLAN_DURATION_PRESETS = (5, 10, 15, 20, 30, 45, 60, 90, 120, 180)
 PLAN_MORNING_END_MIN = 12 * 60
 PLAN_DAY_END_MIN_BAND = 17 * 60
@@ -1365,19 +1367,48 @@ async def page_plan(request: Request):
     is_today = date_str == today_str
     is_past = d < _date.fromisoformat(today_str)
 
-    def _plan_band_px(top_min: int, end_min: int) -> dict[str, float]:
-        step = PLAN_SLOT_STEP_MIN
-        px = PLAN_ROW_HEIGHT_PX
-        return {
-            "top_px": ((top_min - PLAN_DAY_START_MIN) / step) * px,
-            "height_px": max(0.0, ((end_min - top_min) / step) * px),
-        }
+    step = PLAN_SLOT_STEP_MIN
+    pr = PLAN_ROW_HEIGHT_PX
+    vgap = PLAN_SLOT_VERTICAL_GAP_PX
 
-    plan_bands = [
-        {"class": "plan-grid-band plan-grid-band--morning", **_plan_band_px(PLAN_DAY_START_MIN, PLAN_MORNING_END_MIN)},
-        {"class": "plan-grid-band plan-grid-band--day", **_plan_band_px(PLAN_MORNING_END_MIN, PLAN_DAY_END_MIN_BAND)},
-        {"class": "plan-grid-band plan-grid-band--evening", **_plan_band_px(PLAN_DAY_END_MIN_BAND, PLAN_DAY_END_MIN)},
+    plan_periods: list[dict] = []
+    period_defs = [
+        ("morning", "🌅 Утро", PLAN_DAY_START_MIN, PLAN_MORNING_END_MIN, "plan-period-panel--morning"),
+        ("day", "☀️ День", PLAN_MORNING_END_MIN, PLAN_DAY_END_MIN_BAND, "plan-period-panel--day"),
+        ("evening", "🌆 Вечер", PLAN_DAY_END_MIN_BAND, PLAN_DAY_END_MIN, "plan-period-panel--evening"),
     ]
+    for pkey, ptitle, p0, p1, panel_class in period_defs:
+        prow = []
+        for m in range(p0, p1, step):
+            prow.append(
+                {
+                    "start_min": m,
+                    "label": _format_min_as_hhmm(m),
+                    "is_hour": (m % 60 == 0),
+                }
+            )
+        pslots: list[dict] = []
+        for s in slot_blocks:
+            sm = int(s["start_min"])
+            if not (p0 <= sm < p1):
+                continue
+            top = ((sm - p0) / step) * pr
+            h_raw = (int(s["duration_min"]) / step) * pr
+            height_px = max(56.0, h_raw - vgap)
+            pslots.append({**s, "top_px": top, "height_px": height_px})
+        grid_h = ((p1 - p0) / step) * pr
+        plan_periods.append(
+            {
+                "key": pkey,
+                "title": ptitle,
+                "panel_class": panel_class,
+                "period_start": p0,
+                "period_end": p1,
+                "grid_rows": prow,
+                "slots": pslots,
+                "grid_h": int(grid_h),
+            }
+        )
 
     return templates.TemplateResponse(
         request,
@@ -1394,9 +1425,9 @@ async def page_plan(request: Request):
             other_tasks=other_tasks,
             slots=slot_blocks,
             grid_rows=grid_rows,
+            plan_periods=plan_periods,
             slot_step_min=PLAN_SLOT_STEP_MIN,
             plan_row_px=PLAN_ROW_HEIGHT_PX,
-            plan_bands=plan_bands,
             day_start_min=PLAN_DAY_START_MIN,
             day_end_min=PLAN_DAY_END_MIN,
             duration_presets=PLAN_DURATION_PRESETS,

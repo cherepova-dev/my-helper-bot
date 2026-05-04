@@ -2008,13 +2008,18 @@ def add_plan_slot(
 
 def _due_time_to_start_min(due_time: str | None) -> int | None:
     """Парсит due_time задачи (ЧЧ:ММ) в минуты от полуночи."""
-    s = (due_time or "").strip()
+    raw = due_time
+    if raw is None:
+        return None
+    s = str(raw).strip()
     if not s:
         return None
+    if " " in s:
+        s = s.split()[-1]
     s = s.replace(".", ":")
     if ":" not in s:
         return None
-    parts = s.split(":", 1)
+    parts = s.split(":")
     try:
         h = int(parts[0])
         m_seg = parts[1][:2] if len(parts[1]) >= 2 else parts[1]
@@ -2026,39 +2031,122 @@ def _due_time_to_start_min(due_time: str | None) -> int | None:
     return h * 60 + m
 
 
+def _routine_time_of_day_default_start_min(time_of_day: str | None) -> int | None:
+    """Якорное время для рутины только с блоком суток (без точного due_time)."""
+    tod = (time_of_day or "").strip().lower()
+    return {
+        "утро": 8 * 60,
+        "день": 13 * 60,
+        "вечер": 19 * 60,
+        "ночь": 21 * 60,
+    }.get(tod)
+
+
+def _preferred_plan_start_min(task: dict) -> int | None:
+    sm = _due_time_to_start_min(task.get("due_time"))
+    if sm is not None:
+        return sm
+    if task.get("is_routine"):
+        return _routine_time_of_day_default_start_min(task.get("time_of_day"))
+    return None
+
+
+def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not intervals:
+        return []
+    s = sorted(intervals)
+    out: list[tuple[int, int]] = []
+    a0, b0 = s[0]
+    for a, b in s[1:]:
+        if a <= b0:
+            b0 = max(b0, b)
+        else:
+            out.append((a0, b0))
+            a0, b0 = a, b
+    out.append((a0, b0))
+    return out
+
+
+def _find_gap_start_min(
+    merged: list[tuple[int, int]],
+    duration: int,
+    earliest: int,
+    latest_end: int,
+    day_floor: int,
+) -> int | None:
+    """Первый подходящий старт >= earliest (с учётом day_floor)."""
+    pos = max(int(earliest), int(day_floor))
+    for a, b in merged:
+        if pos + duration <= a:
+            return pos
+        pos = max(pos, b)
+    if pos + duration <= latest_end:
+        return pos
+    return None
+
+
 def ensure_plan_slots_from_due_time(user_id: int, date_str: str) -> int:
-    """Для задач дня с указанным временем (due_time), ещё без слота в плане, создаёт слот.
+    """Создаёт слоты для задач дня без слота: по точному due_time или по блоку суток у рутины.
 
     Длительность: estimate_min, если ≥ 5 мин, иначе 30 мин; кратность 5 мин.
-    Время старта не ниже 06:00 — как нижняя граница сетки планировщика.
+    Нижняя граница дня плана — 06:00. Если желаемое время занято, ищется ближайший
+    свободный промежуток от предпочтительного времени (без наложений).
     Возвращает число созданных слотов.
     """
     plan_day_start_min = 6 * 60
+    day_end_min = 24 * 60
     slots = get_plan_slots(user_id, date_str)
     planned = {int(s["task_id"]) for s in slots}
+    intervals = [
+        (int(s["start_min"]), int(s["start_min"]) + int(s["duration_min"])) for s in slots
+    ]
+    merged = _merge_intervals(intervals)
+
     day_tasks = get_tasks_for_date(user_id, date_str)
+
+    def _sort_key(t: dict) -> tuple:
+        pref = _preferred_plan_start_min(t)
+        has_exact = _due_time_to_start_min(t.get("due_time")) is not None
+        return (
+            0 if has_exact else 1,
+            pref if pref is not None else 99999,
+            int(t["id"]),
+        )
+
+    day_tasks_sorted = sorted(day_tasks, key=_sort_key)
     created = 0
-    for t in day_tasks:
+    for t in day_tasks_sorted:
         tid = int(t["id"])
         if tid in planned:
             continue
-        sm = _due_time_to_start_min(t.get("due_time"))
-        if sm is None:
+        preferred = _preferred_plan_start_min(t)
+        if preferred is None:
             continue
-        sm = max(sm, plan_day_start_min)
+        preferred = max(int(preferred), plan_day_start_min)
         est = int(t.get("estimate_min") or 0)
         dur = max(30, est) if est < 5 else max(5, est)
         if dur % 5:
             dur += 5 - (dur % 5)
-        if sm + dur > 24 * 60:
-            dur = max(5, 24 * 60 - sm)
+        if preferred + dur > day_end_min:
+            dur = max(5, day_end_min - preferred)
             if dur % 5:
                 dur -= dur % 5
             if dur < 5:
                 continue
-        res = add_plan_slot(user_id, date_str, tid, sm, dur)
+
+        merged = _merge_intervals(intervals)
+        start = _find_gap_start_min(merged, dur, preferred, day_end_min, plan_day_start_min)
+        if start is None:
+            start = _find_gap_start_min(
+                merged, dur, plan_day_start_min, day_end_min, plan_day_start_min
+            )
+        if start is None:
+            continue
+
+        res = add_plan_slot(user_id, date_str, tid, start, dur)
         if res.get("ok"):
             planned.add(tid)
+            intervals.append((start, start + dur))
             created += 1
     return created
 
