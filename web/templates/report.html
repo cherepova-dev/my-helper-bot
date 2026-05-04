@@ -3,6 +3,9 @@
 {% block top_title %}{{ title }}{% endblock %}
 {% block content %}
 <h1 class="page-heading report-page-title">{{ title }}</h1>
+{% if timezone_line is defined and timezone_line %}
+<p class="muted report-timezone-line">{{ timezone_line }}</p>
+{% endif %}
 <article class="report-card" aria-label="Текст отчёта">
   {{ body_html | safe }}
 </article>

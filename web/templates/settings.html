@@ -5,6 +5,17 @@
 <h1 class="page-heading">Настройки</h1>
 
 <form method="post" action="/settings" class="card stack-form settings-form">
+  <h2 class="home-section-title">Время и отчёты</h2>
+  <label class="settings-field">
+    <span class="settings-label">Часовой пояс</span>
+    <span class="muted settings-hint">IANA-имя (как в списке ниже). От него зависят «сегодня», отчёты и календарная неделя.</span>
+    <input type="text" name="timezone" value="{{ timezone_current }}" maxlength="80" autocomplete="off" class="composer-input" list="tz-examples" placeholder="Europe/Berlin">
+    <datalist id="tz-examples">
+      {% for tz in timezone_examples %}
+      <option value="{{ tz }}"></option>
+      {% endfor %}
+    </datalist>
+  </label>
   <h2 class="home-section-title">Планирование</h2>
   <label class="settings-field">
     <span class="settings-label">Максимум задач в день</span>

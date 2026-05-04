@@ -597,6 +597,24 @@ def get_user_timezone(user_id: int) -> str:
     return "Europe/Moscow"
 
 
+def set_user_timezone(user_id: int, tz_name: str) -> bool:
+    """IANA-идентификатор часового пояса (Europe/Berlin и т.д.). Пустое или невалидное — False."""
+    raw = (tz_name or "").strip()
+    if not raw:
+        return False
+    if ZoneInfo is not None:
+        try:
+            ZoneInfo(raw)
+        except Exception:
+            return False
+    n = _execute(
+        "UPDATE users SET timezone = %s WHERE id = %s",
+        (raw, user_id),
+    )
+    _invalidate_user_timezone_cache(user_id)
+    return n > 0
+
+
 # ── Settings ──────────────────────────────────────────────────────────────
 
 DEFAULT_SETTINGS = {
@@ -1937,7 +1955,7 @@ def add_plan_slot(
 
     Возвращает {ok, message, slot_id?}.
     """
-    if duration_min <= 0 or duration_min > 24 * 60:
+    if duration_min < 5 or duration_min > 24 * 60:
         return {"ok": False, "message": "Длительность от 5 до 1440 минут."}
     if start_min < 0 or start_min >= 24 * 60:
         return {"ok": False, "message": "Время старта вне диапазона дня."}
@@ -1991,7 +2009,7 @@ def add_plan_slot(
 def update_plan_slot(
     user_id: int, slot_id: int, start_min: int, duration_min: int
 ) -> dict:
-    if duration_min <= 0 or duration_min > 24 * 60:
+    if duration_min < 5 or duration_min > 24 * 60:
         return {"ok": False, "message": "Длительность от 5 до 1440 минут."}
     if start_min < 0 or start_min >= 24 * 60:
         return {"ok": False, "message": "Время старта вне диапазона дня."}

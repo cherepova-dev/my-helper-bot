@@ -32,7 +32,11 @@ def _parse_due_date_with_today(task_text: str):
     return parse_due_date(task_text, today=datetime.now())
 
 
-def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
+def add_task_from_text(
+    user_row: dict,
+    task_text: str,
+    project_id: int | None = None,
+) -> dict[str, Any]:
     """
     Добавляет задачу/рутину. Возвращает
     {ok: bool, message: str} — message для показа пользователю (без Telegram Markdown).
@@ -42,6 +46,9 @@ def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
 
     task_text = task_text.strip()
     internal_user_id = user_row["id"]
+    if project_id is not None:
+        if not db.get_project(internal_user_id, int(project_id)):
+            return {"ok": False, "message": "Проект не найден."}
     settings = db.get_settings(internal_user_id)
 
     is_routine, repeat_day = routines.is_routine_and_repeat(task_text)
@@ -98,10 +105,13 @@ def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
             priority_size=5,
             is_routine=is_routine,
             repeat_day=repeat_day,
+            project_id=project_id,
         )
         if not task_row:
             return {"ok": False, "message": "Не удалось сохранить задачу."}
-        db.append_color_sort_new_project_task(internal_user_id, project_id, int(task_row["id"]))
+        tid = int(task_row["id"])
+        if project_id is not None:
+            db.append_color_sort_new_project_task(internal_user_id, int(project_id), tid)
         rd = task_row.get("repeat_day") or repeat_day
         msg = f"Задача принята: «{task_title}». Категория: {category_emoji} {category_name}. "
         if is_routine and rd:
@@ -110,6 +120,11 @@ def add_task_from_text(user_row: dict, task_text: str) -> dict[str, Any]:
             msg += f"Срок: {date_label}."
         if time_of_day_val:
             msg += f" Время суток: {time_of_day_val}."
+        if project_id is not None:
+            proj = db.get_project(internal_user_id, int(project_id))
+            if proj:
+                pem = (proj.get("emoji") or "📁").strip() or "📁"
+                msg += f" Проект: {pem} {(proj.get('title') or '').strip()}."
         return {"ok": True, "message": msg.strip()}
     except Exception as e:
         logger.exception("add_task_from_text: %s", e)

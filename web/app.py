@@ -713,6 +713,7 @@ async def page_home(request: Request):
             job_3_title=JOB_3_TITLE,
             job_3_short=JOB_3_SHORT,
             job_3_how=JOB_3_HOW,
+            project_choices=_composer_projects(uid),
         ),
     )
 
@@ -847,6 +848,7 @@ async def page_today(request: Request):
             category_choices=_category_choices(uid),
             color_choices=TASK_COLOR_CHOICES,
             kebab_hide_schedule=True,
+            project_choices=_composer_projects(uid),
         ),
     )
 
@@ -969,7 +971,11 @@ async def page_report_today(request: Request):
     return templates.TemplateResponse(
         request,
         "report.html",
-        _ctx(title="Сделано сегодня", body_html=body_html),
+        _ctx(
+            title="Сделано сегодня",
+            body_html=body_html,
+            timezone_line=_timezone_line_for_reports(tz_name),
+        ),
     )
 
 
@@ -1086,8 +1092,11 @@ async def action_project_unarchive(request: Request, project_id: int):
 
 PLAN_DAY_START_MIN = 6 * 60   # 06:00
 PLAN_DAY_END_MIN = 24 * 60    # 24:00 (показываем сетку до полуночи)
-PLAN_SLOT_STEP_MIN = 30
-PLAN_DURATION_PRESETS = (5, 15, 30, 45, 60, 90, 120, 180)
+PLAN_SLOT_STEP_MIN = 15
+PLAN_ROW_HEIGHT_PX = 18
+PLAN_DURATION_PRESETS = (5, 10, 15, 20, 30, 45, 60, 90, 120, 180)
+PLAN_MORNING_END_MIN = 12 * 60
+PLAN_DAY_END_MIN_BAND = 17 * 60
 
 
 def _format_min_as_hhmm(m: int) -> str:
@@ -1119,6 +1128,120 @@ def _humanize_minutes(total: int) -> str:
     if h:
         return f"{h} ч"
     return f"{m} мин"
+
+
+def _timezone_line_for_reports(tz_name: str) -> str:
+    """Подпись под отчётом: локальный пояс пользователя и текущее смещение от UTC."""
+    raw = (tz_name or "").strip() or "Europe/Moscow"
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+
+        z = ZoneInfo(raw)
+        now = datetime.now(z)
+        off = now.utcoffset()
+        if off is None:
+            return f"Время в отчёте: {raw}"
+        total_min = int(off.total_seconds() // 60)
+        sign = "+" if total_min >= 0 else "-"
+        ah = abs(total_min) // 60
+        am = abs(total_min) % 60
+        return f"Часовой пояс: {raw} (сейчас {sign}{ah}:{am:02d} к UTC)."
+    except Exception:
+        return f"Часовой пояс: {raw}"
+
+
+def _composer_projects(uid: int) -> list[dict]:
+    rows = []
+    for p in db.list_projects(uid):
+        rows.append(
+            {
+                "id": int(p["id"]),
+                "title": (p.get("title") or "").strip(),
+                "emoji": ((p.get("emoji") or "📁").strip() or "📁"),
+            }
+        )
+    return sorted(rows, key=lambda x: x["title"].lower())
+
+
+def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not intervals:
+        return []
+    s = sorted(intervals)
+    out: list[tuple[int, int]] = []
+    a0, b0 = s[0]
+    for a, b in s[1:]:
+        if a <= b0:
+            b0 = max(b0, b)
+        else:
+            out.append((a0, b0))
+            a0, b0 = a, b
+    out.append((a0, b0))
+    return out
+
+
+def _plan_find_gap_start(
+    merged: list[tuple[int, int]],
+    duration: int,
+    earliest: int,
+    latest_end: int,
+) -> int | None:
+    pos = max(earliest, PLAN_DAY_START_MIN)
+    for a, b in merged:
+        if pos + duration <= a:
+            return pos
+        pos = max(pos, b)
+    if pos + duration <= latest_end:
+        return pos
+    return None
+
+
+def _plan_auto_place_backlog(uid: int, date_str: str) -> dict[str, str | bool]:
+    """Ставит в план задачи бэклога дня подряд, длительность из estimate_min (или 30 мин)."""
+    from bot_v2 import _task_time_bucket
+
+    slots = db.get_plan_slots(uid, date_str)
+    planned_ids = {int(s["task_id"]) for s in slots}
+    intervals = [(int(s["start_min"]), int(s["start_min"]) + int(s["duration_min"])) for s in slots]
+
+    day_tasks = db.get_tasks_for_date(uid, date_str)
+    backlog = [t for t in day_tasks if int(t["id"]) not in planned_ids]
+    if not backlog:
+        return {"ok": True, "message": "Бэклог на этот день пуст — добавлять нечего."}
+
+    def _bk_order(t: dict) -> tuple:
+        b = _task_time_bucket(t)
+        bo = {"утро": 0, "день": 1, "вечер": 2, "ночь": 3}.get(b, 2)
+        routine_last = 0 if t.get("is_routine") else 1
+        return (bo, routine_last, int(t["id"]))
+
+    backlog.sort(key=_bk_order)
+
+    placed = 0
+    skipped = 0
+    merged = _merge_intervals(intervals)
+
+    for t in backlog:
+        dur_raw = int(t.get("estimate_min") or 30)
+        dur = max(5, min(dur_raw, 24 * 60 - 1))
+        if dur % 5:
+            dur += 5 - (dur % 5)
+        start = _plan_find_gap_start(merged, dur, PLAN_DAY_START_MIN, PLAN_DAY_END_MIN)
+        if start is None:
+            skipped += 1
+            continue
+        res = db.add_plan_slot(uid, date_str, int(t["id"]), start, dur)
+        if not res.get("ok"):
+            skipped += 1
+            continue
+        placed += 1
+        intervals.append((start, start + dur))
+        merged = _merge_intervals(intervals)
+
+    msg = f"Добавлено в расписание: {placed}."
+    if skipped:
+        msg += f" Не удалось разместить: {skipped} (не хватило места в сутках или ошибка)."
+    return {"ok": True, "message": msg}
 
 
 @app.get("/plan", response_class=HTMLResponse)
@@ -1218,6 +1341,20 @@ async def page_plan(request: Request):
     is_today = date_str == today_str
     is_past = d < _date.fromisoformat(today_str)
 
+    def _plan_band_px(top_min: int, end_min: int) -> dict[str, float]:
+        step = PLAN_SLOT_STEP_MIN
+        px = PLAN_ROW_HEIGHT_PX
+        return {
+            "top_px": ((top_min - PLAN_DAY_START_MIN) / step) * px,
+            "height_px": max(0.0, ((end_min - top_min) / step) * px),
+        }
+
+    plan_bands = [
+        {"class": "plan-grid-band plan-grid-band--morning", **_plan_band_px(PLAN_DAY_START_MIN, PLAN_MORNING_END_MIN)},
+        {"class": "plan-grid-band plan-grid-band--day", **_plan_band_px(PLAN_MORNING_END_MIN, PLAN_DAY_END_MIN_BAND)},
+        {"class": "plan-grid-band plan-grid-band--evening", **_plan_band_px(PLAN_DAY_END_MIN_BAND, PLAN_DAY_END_MIN)},
+    ]
+
     return templates.TemplateResponse(
         request,
         "plan.html",
@@ -1234,6 +1371,8 @@ async def page_plan(request: Request):
             slots=slot_blocks,
             grid_rows=grid_rows,
             slot_step_min=PLAN_SLOT_STEP_MIN,
+            plan_row_px=PLAN_ROW_HEIGHT_PX,
+            plan_bands=plan_bands,
             day_start_min=PLAN_DAY_START_MIN,
             day_end_min=PLAN_DAY_END_MIN,
             duration_presets=PLAN_DURATION_PRESETS,
@@ -1266,6 +1405,16 @@ async def action_plan_add_slot(
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, f"/plan?date={date}", result["message"], result["ok"])
+
+
+@app.post("/plan/auto_place")
+async def action_plan_auto_place(request: Request, date: str = Form(...)):
+    if not _is_authenticated(request):
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    date_str = (date or "").strip()[:10]
+    result = _plan_auto_place_backlog(uid, date_str)
+    return _flash_redirect(request, f"/plan?date={date_str}", str(result["message"]), bool(result["ok"]))
 
 
 @app.post("/plan/update_slot")
@@ -1518,7 +1667,7 @@ async def page_actions(request: Request):
     return templates.TemplateResponse(
         request,
         "actions.html",
-        _ctx(done_items=done_items),
+        _ctx(done_items=done_items, project_choices=_composer_projects(uid)),
     )
 
 
@@ -1533,15 +1682,32 @@ async def page_settings(request: Request):
     except (TypeError, ValueError):
         n = 7
     n = max(1, min(50, n))
+    user_row = get_user_row(request)
+    tz_cur = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
+    tz_examples = (
+        "Europe/Moscow",
+        "Europe/Kaliningrad",
+        "Asia/Yekaterinburg",
+        "Asia/Novosibirsk",
+        "Europe/Kiev",
+        "Europe/Berlin",
+        "Europe/London",
+        "America/New_York",
+        "UTC",
+    )
     return templates.TemplateResponse(
         request,
         "settings.html",
-        _ctx(max_tasks_per_day=n),
+        _ctx(max_tasks_per_day=n, timezone_current=tz_cur, timezone_examples=tz_examples),
     )
 
 
 @app.post("/settings")
-async def action_settings(request: Request, max_tasks_per_day: str = Form("7")):
+async def action_settings(
+    request: Request,
+    max_tasks_per_day: str = Form("7"),
+    timezone: str = Form(""),
+):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row(request)["id"]
@@ -1551,6 +1717,15 @@ async def action_settings(request: Request, max_tasks_per_day: str = Form("7")):
         n = 7
     n = max(1, min(50, n))
     db.update_settings(uid, max_tasks_per_day=n)
+    tz_raw = (timezone or "").strip()
+    if tz_raw:
+        if not db.set_user_timezone(uid, tz_raw):
+            return _flash_redirect(
+                request,
+                "/settings",
+                "Часовой пояс не распознан. Укажи IANA-имя, например Europe/Berlin.",
+                False,
+            )
     return _flash_redirect(request, "/settings", "Настройки сохранены.", True)
 
 
@@ -1578,7 +1753,11 @@ async def page_report_week(request: Request):
     return templates.TemplateResponse(
         request,
         "report.html",
-        _ctx(title="Сделано за неделю", body_html=body_html),
+        _ctx(
+            title="Сделано за неделю",
+            body_html=body_html,
+            timezone_line=_timezone_line_for_reports(tz_name),
+        ),
     )
 
 
@@ -1652,11 +1831,15 @@ async def page_reports_projects(request: Request):
 
 
 @app.post("/tasks/add")
-async def action_add(request: Request, text: str = Form("")):
+async def action_add(request: Request, text: str = Form(""), project_id: str = Form("")):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     user_row = get_user_row(request)
-    result = add_task_from_text(user_row, text)
+    pid: int | None = None
+    raw_pid = (project_id or "").strip()
+    if raw_pid.isdigit():
+        pid = int(raw_pid)
+    result = add_task_from_text(user_row, text, project_id=pid)
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
     if _flash_allowed(path):

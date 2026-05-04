@@ -448,7 +448,33 @@ body {
 .home-link-list li { margin: 0.35rem 0; }
 
 /* ——— Composer + voice ——— */
+.report-timezone-line {
+  margin: -0.35rem 0 1rem;
+  font-size: 0.9rem;
+}
 .composer-title { font-size: 1rem; margin: 0 0 0.75rem; }
+.composer-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.composer-input--full {
+  width: 100%;
+  box-sizing: border-box;
+}
+.composer-project-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  font-size: 0.88rem;
+}
+.composer-project-select {
+  max-width: 100%;
+}
+.composer-submit-row {
+  display: flex;
+  justify-content: flex-start;
+}
 
 .composer-row {
   display: flex;
@@ -1138,12 +1164,24 @@ pre.task-dump, pre.report {
   border-radius: 8px;
   background: var(--card);
   min-height: 300px;
+  --plan-row-h: 18px;
 }
+.plan-grid-band {
+  position: absolute;
+  left: 56px;
+  right: 8px;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 4px;
+}
+.plan-grid-band--morning { background: rgba(120, 190, 255, 0.12); }
+.plan-grid-band--day { background: rgba(255, 150, 190, 0.09); }
+.plan-grid-band--evening { background: rgba(170, 140, 255, 0.1); }
 .plan-grid-row {
   position: absolute;
   left: 0;
   right: 0;
-  height: 36px;
+  height: var(--plan-row-h, 18px);
   border-top: 1px solid rgba(127, 127, 127, 0.15);
   pointer-events: none;
 }
@@ -1166,6 +1204,29 @@ pre.task-dump, pre.report {
   overflow: hidden;
   z-index: 2;
 }
+.plan-auto-row {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+}
+.plan-auto-hint {
+  font-size: 0.82rem;
+  flex: 1;
+  min-width: 12rem;
+}
+.plan-tod-hint { font-size: 0.88rem; line-height: 1.45; }
+.plan-legend {
+  display: inline-block;
+  padding: 0.08rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+.plan-legend--morning { background: rgba(120, 190, 255, 0.28); color: var(--fg); }
+.plan-legend--day { background: rgba(255, 150, 190, 0.22); color: var(--fg); }
+.plan-legend--evening { background: rgba(170, 140, 255, 0.26); color: var(--fg); }
 .plan-slot[open] { z-index: 3; }
 .plan-slot.color-red    { background: rgba(226, 85, 85, 0.20); border-color: #e25555; }
 .plan-slot.color-orange { background: rgba(230, 150, 75, 0.20); border-color: #e6964b; }

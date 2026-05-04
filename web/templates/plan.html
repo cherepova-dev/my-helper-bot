@@ -2,6 +2,8 @@
 {% block title %}Планирование — {{ date_label }}{% endblock %}
 {% block top_title %}Планирование{% endblock %}
 {% block content %}
+{% set pr = plan_row_px | default(18) %}
+{% set grid_h = ((day_end_min - day_start_min) / slot_step_min * pr) | int %}
 <h1 class="page-heading">Планирование дня</h1>
 
 <section class="card plan-day-toolbar">
@@ -20,12 +22,19 @@
     Запланировано: <strong>{{ total_planned_label }}</strong>
     {% if backlog_count %} · в бэклоге на этот день: <strong>{{ backlog_count }}</strong>{% endif %}
   </div>
+  {% if backlog_count %}
+  <form method="post" action="/plan/auto_place" class="plan-auto-row">
+    <input type="hidden" name="date" value="{{ date_str }}">
+    <button type="submit" class="btn-primary plan-auto-btn">Разложить бэклог по порядку</button>
+    <span class="muted plan-auto-hint">Подряд свободными промежутками; длительность из поля «оценка» задачи (в меню ⋯), иначе 30 мин.</span>
+  </form>
+  {% endif %}
 </section>
 
 <div class="plan-layout">
   <section class="card plan-backlog-card">
     <h2 class="home-section-title">Бэклог на день</h2>
-    <p class="muted">Задачи и рутины, назначенные на этот день. Тапни «В план», чтобы поставить во временной слот.</p>
+    <p class="muted">Задачи и рутины на эту дату. Задай время выполнения в карточке задачи (⋯), чтобы здесь и в автоматической раскладке использовались нужные минуты.</p>
     {% if backlog %}
     <ul class="plan-backlog-list">
       {% for row in backlog %}
@@ -43,7 +52,7 @@
             <input type="hidden" name="task_id" value="{{ row.task_id }}">
             <input type="hidden" name="date" value="{{ date_str }}">
             <label class="plan-add-label">Время старта
-              <input type="time" name="start" step="900" value="09:00" required>
+              <input type="time" name="start" step="300" value="09:00" required>
             </label>
             <label class="plan-add-label">Длительность
               <select name="duration_min" required aria-label="Длительность">
@@ -81,7 +90,7 @@
               <input type="hidden" name="task_id" value="{{ row.task_id }}">
               <input type="hidden" name="date" value="{{ date_str }}">
               <label class="plan-add-label">Время старта
-                <input type="time" name="start" step="900" value="09:00" required>
+                <input type="time" name="start" step="300" value="09:00" required>
               </label>
               <label class="plan-add-label">Длительность
                 <select name="duration_min" required aria-label="Длительность">
@@ -102,11 +111,14 @@
 
   <section class="card plan-grid-card">
     <h2 class="home-section-title">Расписание дня</h2>
-    <p class="muted">Сетка по 30 минут с 06:00 до 24:00. Тапни блок задачи, чтобы изменить время или убрать.</p>
-    <div class="plan-grid" style="--plan-step:{{ slot_step_min }}; --plan-start:{{ day_start_min }};">
+    <p class="muted plan-tod-hint"><span class="plan-legend plan-legend--morning">Утро</span> · <span class="plan-legend plan-legend--day">День</span> · <span class="plan-legend plan-legend--evening">Вечер</span> — подсказка по времени суток. Сетка шагом {{ slot_step_min }} мин (06:00–24:00).</p>
+    <div class="plan-grid" style="--plan-step:{{ slot_step_min }}; --plan-start:{{ day_start_min }}; --plan-row-h:{{ pr }}px; min-height: {{ grid_h }}px;">
+      {% for b in plan_bands %}
+      <div class="{{ b.class }}" style="top: {{ b.top_px }}px; height: {{ b.height_px }}px;" aria-hidden="true"></div>
+      {% endfor %}
       {% for s in slots %}
       <details class="plan-slot{% if s.color %} has-color color-{{ s.color }}{% endif %}"
-               style="top: {{ ((s.start_min - day_start_min) / slot_step_min) * 36 }}px; height: {{ (s.duration_min / slot_step_min) * 36 - 2 }}px;">
+               style="top: {{ ((s.start_min - day_start_min) / slot_step_min) * pr }}px; height: {{ (s.duration_min / slot_step_min) * pr - 2 }}px;">
         <summary class="plan-slot-summary">
           <span class="plan-slot-time">{{ s.start_label }}–{{ s.end_label }}</span>
           <span class="plan-slot-text">{{ s.text }}</span>
@@ -117,7 +129,7 @@
             <input type="hidden" name="slot_id" value="{{ s.slot_id }}">
             <input type="hidden" name="date" value="{{ date_str }}">
             <label class="plan-add-label">Время
-              <input type="time" name="start" step="900" value="{{ s.start_label }}" required>
+              <input type="time" name="start" step="300" value="{{ s.start_label }}" required>
             </label>
             <label class="plan-add-label">Длительность
               <select name="duration_min" required aria-label="Длительность">
@@ -137,7 +149,7 @@
       </details>
       {% endfor %}
       {% for r in grid_rows %}
-      <div class="plan-grid-row{% if r.is_hour %} plan-grid-row--hour{% endif %}" style="top: {{ ((r.start_min - day_start_min) / slot_step_min) * 36 }}px;">
+      <div class="plan-grid-row{% if r.is_hour %} plan-grid-row--hour{% endif %}" style="top: {{ ((r.start_min - day_start_min) / slot_step_min) * pr }}px;">
         <span class="plan-grid-time muted">{{ r.label }}</span>
       </div>
       {% endfor %}
