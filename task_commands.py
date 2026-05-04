@@ -615,6 +615,25 @@ def _normalize_web_repeat_day(raw: str) -> str | None:
     return None
 
 
+def set_task_project_by_id(user_id: int, task_id: int, raw_project_id: str) -> dict[str, Any]:
+    """Привязать задачу к проекту или отвязать (пустая строка)."""
+    task = _find_task_in_active(user_id, task_id)
+    if not task:
+        return {"ok": False, "message": "Задача не найдена."}
+    raw = (raw_project_id or "").strip()
+    if not raw:
+        db.update_task(task_id, user_id, project_id=None)
+        return {"ok": True, "message": "Проект отвязан."}
+    if not raw.isdigit():
+        return {"ok": False, "message": "Некорректный проект."}
+    pid = int(raw)
+    if not db.get_project(user_id, pid):
+        return {"ok": False, "message": "Проект не найден."}
+    db.update_task(task_id, user_id, project_id=pid)
+    db.append_color_sort_new_project_task(user_id, pid, task_id)
+    return {"ok": True, "message": "Проект обновлён."}
+
+
 def set_task_category_by_id(user_id: int, task_id: int, category_name: str) -> dict[str, Any]:
     category_name = (category_name or "").strip()
     if not category_name:

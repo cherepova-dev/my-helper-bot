@@ -453,6 +453,55 @@ body {
   font-size: 0.9rem;
 }
 .composer-title { font-size: 1rem; margin: 0 0 0.75rem; }
+.composer--compact .composer-title {
+  font-size: 0.95rem;
+  margin-bottom: 0.45rem;
+}
+.composer-inline {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  align-items: stretch;
+  margin-bottom: 0.45rem;
+}
+.composer-input-grow {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.composer-submit-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.composer-voice-row {
+  margin-top: 0;
+}
+.voice-buttons--compact {
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.btn-voice--icon {
+  min-width: 2.5rem;
+  padding-left: 0.65rem;
+  padding-right: 0.65rem;
+}
+.btn-file--compact {
+  font-size: 0.88rem;
+  padding: 0.45rem 0.65rem;
+}
+.voice-status--compact {
+  margin-top: 0.35rem;
+  margin-bottom: 0;
+  font-size: 0.82rem;
+}
+.routine-line-repeat--today {
+  font-size: 0.88rem;
+  margin-top: 0.15rem;
+}
+.settings-tz-device {
+  margin-top: 0.45rem;
+}
 .composer-form-stack {
   display: flex;
   flex-direction: column;

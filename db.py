@@ -2006,6 +2006,63 @@ def add_plan_slot(
     }
 
 
+def _due_time_to_start_min(due_time: str | None) -> int | None:
+    """Парсит due_time задачи (ЧЧ:ММ) в минуты от полуночи."""
+    s = (due_time or "").strip()
+    if not s:
+        return None
+    s = s.replace(".", ":")
+    if ":" not in s:
+        return None
+    parts = s.split(":", 1)
+    try:
+        h = int(parts[0])
+        m_seg = parts[1][:2] if len(parts[1]) >= 2 else parts[1]
+        m = int(m_seg)
+    except (ValueError, IndexError):
+        return None
+    if not (0 <= h < 24 and 0 <= m < 60):
+        return None
+    return h * 60 + m
+
+
+def ensure_plan_slots_from_due_time(user_id: int, date_str: str) -> int:
+    """Для задач дня с указанным временем (due_time), ещё без слота в плане, создаёт слот.
+
+    Длительность: estimate_min, если ≥ 5 мин, иначе 30 мин; кратность 5 мин.
+    Время старта не ниже 06:00 — как нижняя граница сетки планировщика.
+    Возвращает число созданных слотов.
+    """
+    plan_day_start_min = 6 * 60
+    slots = get_plan_slots(user_id, date_str)
+    planned = {int(s["task_id"]) for s in slots}
+    day_tasks = get_tasks_for_date(user_id, date_str)
+    created = 0
+    for t in day_tasks:
+        tid = int(t["id"])
+        if tid in planned:
+            continue
+        sm = _due_time_to_start_min(t.get("due_time"))
+        if sm is None:
+            continue
+        sm = max(sm, plan_day_start_min)
+        est = int(t.get("estimate_min") or 0)
+        dur = max(30, est) if est < 5 else max(5, est)
+        if dur % 5:
+            dur += 5 - (dur % 5)
+        if sm + dur > 24 * 60:
+            dur = max(5, 24 * 60 - sm)
+            if dur % 5:
+                dur -= dur % 5
+            if dur < 5:
+                continue
+        res = add_plan_slot(user_id, date_str, tid, sm, dur)
+        if res.get("ok"):
+            planned.add(tid)
+            created += 1
+    return created
+
+
 def update_plan_slot(
     user_id: int, slot_id: int, start_min: int, duration_min: int
 ) -> dict:

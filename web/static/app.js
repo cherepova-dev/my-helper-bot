@@ -506,6 +506,16 @@
         taskActionReload(postTaskAction("/tasks/set_category", fd));
         return;
       }
+
+      var projSel = e.target.closest(".task-project-select");
+      if (projSel) {
+        var lineP = projSel.closest(".task-line");
+        if (!lineP) return;
+        var fdP = taskFd(lineP);
+        fdP.append("project_id", projSel.value || "");
+        taskActionReload(postTaskAction("/tasks/set_project", fdP));
+        return;
+      }
     });
 
     function startEdit(line) {

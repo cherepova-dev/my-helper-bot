@@ -48,6 +48,7 @@ from task_commands import (
     reschedule_task_by_id,
     routine_snooze_from_today_plan,
     set_task_category_by_id,
+    set_task_project_by_id,
     set_task_color_by_id,
     set_task_repeat_day_by_id,
     set_task_routine_kind_by_id,
@@ -713,7 +714,6 @@ async def page_home(request: Request):
             job_3_title=JOB_3_TITLE,
             job_3_short=JOB_3_SHORT,
             job_3_how=JOB_3_HOW,
-            project_choices=_composer_projects(uid),
         ),
     )
 
@@ -751,6 +751,16 @@ def _show_today_bucket(bucket: str, hour: int, n_rows: int) -> bool:
     if bucket == "день":
         return hour < 17
     return True
+
+
+def _task_row_project_id(t: dict) -> int | None:
+    raw = t.get("project_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 @app.get("/today", response_class=HTMLResponse)
@@ -807,6 +817,11 @@ async def page_today(request: Request):
                     pe = (t.get("project_emoji") or "📁").strip() or "📁"
                     pl = f"{pe} {t['project_title']}".strip()
                 rd = (t.get("repeat_day") or "").strip()
+                repeat_label = (
+                    db.format_repeat_day_display(t.get("repeat_day"))
+                    if t.get("is_routine")
+                    else ""
+                )
                 rows.append(
                     {
                         "emoji": emoji,
@@ -818,9 +833,11 @@ async def page_today(request: Request):
                         "color": (t.get("color") or "").strip().lower(),
                         "estimate_min": int(t.get("estimate_min") or 0),
                         "repeat_day": rd,
+                        "repeat_label": repeat_label,
                         "repeat_day_codes": _repeat_day_codes(rd),
                         "repeat_interval": _repeat_interval_for_row(rd),
                         "project_label": pl,
+                        "project_id": _task_row_project_id(t),
                         "kebab_remove_from_plan": bool(t.get("is_routine")),
                         "show_move_today": n_in_bucket >= 1,
                         "can_move_up_today": n_in_bucket > 1 and bi > 0,
@@ -894,6 +911,7 @@ async def page_tasks(request: Request):
             "repeat_interval": _repeat_interval_for_row(rd),
             "project_label": pl,
             "has_project": bool(pl),
+            "project_id": _task_row_project_id(t),
         }
 
     from collections import defaultdict
@@ -950,6 +968,7 @@ async def page_tasks(request: Request):
             next_url="/tasks",
             category_choices=_category_choices(uid),
             color_choices=TASK_COLOR_CHOICES,
+            project_choices=_composer_projects(uid),
         ),
     )
 
@@ -1200,6 +1219,8 @@ def _plan_auto_place_backlog(uid: int, date_str: str) -> dict[str, str | bool]:
     """Ставит в план задачи бэклога дня подряд, длительность из estimate_min (или 30 мин)."""
     from bot_v2 import _task_time_bucket
 
+    db.ensure_plan_slots_from_due_time(uid, date_str)
+
     slots = db.get_plan_slots(uid, date_str)
     planned_ids = {int(s["task_id"]) for s in slots}
     intervals = [(int(s["start_min"]), int(s["start_min"]) + int(s["duration_min"])) for s in slots]
@@ -1213,7 +1234,8 @@ def _plan_auto_place_backlog(uid: int, date_str: str) -> dict[str, str | bool]:
         b = _task_time_bucket(t)
         bo = {"утро": 0, "день": 1, "вечер": 2, "ночь": 3}.get(b, 2)
         routine_last = 0 if t.get("is_routine") else 1
-        return (bo, routine_last, int(t["id"]))
+        has_time = 0 if (t.get("due_time") or "").strip() else 1
+        return (has_time, bo, routine_last, int(t["id"]))
 
     backlog.sort(key=_bk_order)
 
@@ -1261,6 +1283,8 @@ async def page_plan(request: Request):
     date_str = d.strftime("%Y-%m-%d")
     prev_date = (d - _td(days=1)).strftime("%Y-%m-%d")
     next_date = (d + _td(days=1)).strftime("%Y-%m-%d")
+
+    db.ensure_plan_slots_from_due_time(uid, date_str)
 
     slots = db.get_plan_slots(uid, date_str)
     planned_task_ids = {int(s["task_id"]) for s in slots}
@@ -1523,6 +1547,7 @@ async def page_project_detail(request: Request, project_id: int):
                 "repeat_interval": "",
                 "has_project": False,
                 "project_label": "",
+                "project_id": project_id,
                 "show_move": _show_move,
                 "can_move_up": _show_move and _idx > 0,
                 "can_move_down": _show_move and _idx < _total - 1,
@@ -1571,6 +1596,7 @@ async def page_project_detail(request: Request, project_id: int):
             sort_display=sort_display,
             color_choices=TASK_COLOR_CHOICES,
             category_choices=_category_choices(uid),
+            project_choices=_composer_projects(uid),
             project_stats={
                 "active": len(rows),
                 "done_week": n_done_week,
@@ -1598,6 +1624,8 @@ async def page_routines(request: Request):
                 empty=True,
                 next_url="/routines",
                 category_choices=_category_choices(uid),
+                color_choices=TASK_COLOR_CHOICES,
+                project_choices=_composer_projects(uid),
             ),
         )
     _titles = {
@@ -1635,6 +1663,7 @@ async def page_routines(request: Request):
                     "repeat_day": rd,
                     "repeat_day_codes": _repeat_day_codes(rd),
                     "repeat_interval": _repeat_interval_for_row(rd),
+                    "project_id": _task_row_project_id(t),
                 }
             )
         sections.append(
@@ -1653,6 +1682,8 @@ async def page_routines(request: Request):
             empty=False,
             next_url="/routines",
             category_choices=_category_choices(uid),
+            color_choices=TASK_COLOR_CHOICES,
+            project_choices=_composer_projects(uid),
         ),
     )
 
@@ -1667,7 +1698,7 @@ async def page_actions(request: Request):
     return templates.TemplateResponse(
         request,
         "actions.html",
-        _ctx(done_items=done_items, project_choices=_composer_projects(uid)),
+        _ctx(done_items=done_items),
     )
 
 
@@ -1831,15 +1862,11 @@ async def page_reports_projects(request: Request):
 
 
 @app.post("/tasks/add")
-async def action_add(request: Request, text: str = Form(""), project_id: str = Form("")):
+async def action_add(request: Request, text: str = Form("")):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
     user_row = get_user_row(request)
-    pid: int | None = None
-    raw_pid = (project_id or "").strip()
-    if raw_pid.isdigit():
-        pid = int(raw_pid)
-    result = add_task_from_text(user_row, text, project_id=pid)
+    result = add_task_from_text(user_row, text, project_id=None)
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
     if _flash_allowed(path):
@@ -2123,6 +2150,24 @@ async def action_set_category(
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row(request)["id"]
     result = set_task_category_by_id(uid, task_id, category_name)
+    if _wants_json(request):
+        return JSONResponse(result)
+    return _flash_redirect(request, next, result["message"], result["ok"])
+
+
+@app.post("/tasks/set_project")
+async def action_set_project(
+    request: Request,
+    task_id: int = Form(...),
+    next: str = Form("/tasks"),
+    project_id: str = Form(""),
+):
+    if not _is_authenticated(request):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
+        return RedirectResponse("/login", status_code=302)
+    uid = get_user_row(request)["id"]
+    result = set_task_project_by_id(uid, task_id, project_id)
     if _wants_json(request):
         return JSONResponse(result)
     return _flash_redirect(request, next, result["message"], result["ok"])

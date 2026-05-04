@@ -38,6 +38,9 @@
                 <span class="task-meta-right muted">{{ row.time_part }}</span>
                 {% endif %}
               </div>
+              {% if row.is_routine and row.repeat_label %}
+              <div class="muted routine-line-repeat routine-line-repeat--today">— {{ row.repeat_label }}{% if row.estimate_min %} · {{ row.estimate_min }} мин{% endif %}</div>
+              {% endif %}
               {% if row.project_label %}
               <div class="task-project-row muted">{{ row.project_label }}</div>
               {% endif %}

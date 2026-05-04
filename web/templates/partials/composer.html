@@ -1,32 +1,18 @@
-{# Параметры: next_add, next_voice — пути для редиректа после добавления / голоса; project_choices — опционально #}
-{% set _pc = project_choices if project_choices is defined else [] %}
-<section class="composer card">
+{# Параметры: next_add, next_voice — редирект после добавления / голоса #}
+<section class="composer card composer--compact">
   <h2 class="composer-title">Новая задача</h2>
-  <form method="post" action="/tasks/add?next={{ next_add }}" class="composer-form composer-form-stack">
-    <input type="text" name="text" autocomplete="off" placeholder="Текст задачи или рутины…" required class="composer-input composer-input--full">
-    {% if _pc %}
-    <label class="composer-project-label muted">
-      Проект (необязательно)
-      <select name="project_id" class="composer-input composer-project-select" aria-label="Проект">
-        <option value="">— без проекта —</option>
-        {% for p in _pc %}
-        <option value="{{ p.id }}">{{ p.emoji }} {{ p.title }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    {% endif %}
-    <div class="composer-row composer-submit-row">
-      <button type="submit" class="btn-primary">Добавить</button>
-    </div>
+  <form method="post" action="/tasks/add?next={{ next_add }}" class="composer-form composer-inline">
+    <input type="text" name="text" autocomplete="off" placeholder="Текст задачи или рутины…" required class="composer-input composer-input-grow" aria-label="Текст задачи">
+    <button type="submit" class="btn-primary composer-submit-btn">Добавить</button>
   </form>
-  <div class="voice-root" data-voice-root data-voice-endpoint="/tasks/voice?next={{ next_voice }}">
-    <div class="composer-row voice-buttons">
-      <button type="button" class="btn-voice" data-voice-record>🎤 Записать голосом</button>
-      <label class="btn-file">
-        Файл…
+  <div class="voice-root composer-voice-row" data-voice-root data-voice-endpoint="/tasks/voice?next={{ next_voice }}">
+    <div class="composer-row voice-buttons voice-buttons--compact">
+      <button type="button" class="btn-voice btn-voice--icon" data-voice-record title="Записать голосом" aria-label="Записать голосом">🎤</button>
+      <label class="btn-file btn-file--compact" title="Загрузить аудиофайл">
+        Файл
         <input type="file" data-voice-file accept="audio/*,.webm,.ogg,.wav,.mp3,.m4a" hidden>
       </label>
     </div>
-    <p class="voice-status" data-voice-status></p>
+    <p class="voice-status voice-status--compact" data-voice-status></p>
   </div>
 </section>

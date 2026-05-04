@@ -97,6 +97,17 @@
       </select>
     </div>
     {% endif %}
+    {% if project_choices is defined and project_choices %}
+    <div class="task-menu-row-select">
+      <label class="task-menu-label" for="proj-{{ row.task_id }}">Проект</label>
+      <select id="proj-{{ row.task_id }}" class="task-project-select" aria-label="Проект" draggable="false">
+        <option value="" {% if row.project_id is not defined or row.project_id is none %}selected{% endif %}>— без проекта —</option>
+        {% for p in project_choices %}
+        <option value="{{ p.id }}" {% if row.project_id is defined and row.project_id is not none and row.project_id == p.id %}selected{% endif %}>{{ p.emoji }} {{ p.title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
     {% if color_choices is defined %}
     {% set _cur_color = (row.color or '') %}
     <div class="task-menu-row-select">
