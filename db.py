@@ -530,10 +530,14 @@ def set_user_role(user_id: int, role: str) -> bool:
     return True
 
 
+# Дополнительно к WEB_ADMIN_EMAIL(S): при sync_admin_roles всегда admin.
+_BUILTIN_ADMIN_EMAILS_LOWER = frozenset({"medvedeva.yulia.v@gmail.com"})
+
+
 def sync_admin_roles() -> None:
     """
-    Выставляет user_role: admin для WEB_ADMIN_EMAIL / WEB_ADMIN_EMAILS (список через запятую)
-    и для пользователя с именем, где есть «медведева» и «юлия» (регистр не важен).
+    Выставляет user_role: admin для WEB_ADMIN_EMAIL / WEB_ADMIN_EMAILS (список через запятую),
+    для встроенного списка _BUILTIN_ADMIN_EMAILS_LOWER и для имени с «медведева» + «юлия».
     Остальным — user.
 
     Вызывать при старте веб-приложения и после регистрации — не из init таблиц при каждом
@@ -543,6 +547,7 @@ def sync_admin_roles() -> None:
     env_emails = {
         x.strip().lower() for x in raw.replace(";", ",").split(",") if x.strip()
     }
+    admin_emails = env_emails | set(_BUILTIN_ADMIN_EMAILS_LOWER)
     try:
         rows = _fetchall("SELECT id, email, name FROM users")
     except Exception:
@@ -552,7 +557,7 @@ def sync_admin_roles() -> None:
         em = (str(r.get("email") or "")).strip().lower()
         name_l = (str(r.get("name") or "")).strip().lower()
         is_adm = False
-        if env_emails and em and em in env_emails:
+        if em and em in admin_emails:
             is_adm = True
         elif "медведева" in name_l and "юлия" in name_l:
             is_adm = True
