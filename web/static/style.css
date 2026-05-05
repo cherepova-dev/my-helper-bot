@@ -199,6 +199,12 @@ body {
   width: 100%;
 }
 
+@media (min-width: 769px) {
+  main.container.container--plan {
+    max-width: min(118rem, calc(100vw - var(--sidebar-w) - 2rem));
+  }
+}
+
 .global-flash { margin-bottom: 1rem; }
 
 .page-heading {
@@ -1379,13 +1385,14 @@ pre.task-dump, pre.report {
   background: linear-gradient(180deg, rgba(170, 140, 255, 0.12) 0%, var(--card) 48%);
 }
 
-@media (min-width: 1100px) {
+@media (min-width: 900px) {
   .plan-schedule-strip {
     overflow-x: visible;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     scroll-snap-type: none;
     scroll-padding-inline: 0;
+    gap: 0.85rem;
   }
   .plan-period-panel {
     flex: unset;
@@ -1394,6 +1401,7 @@ pre.task-dump, pre.report {
     min-width: 0;
     scroll-snap-align: unset;
     scroll-snap-stop: normal;
+    overflow: visible;
   }
 }
 
@@ -1443,9 +1451,14 @@ pre.task-dump, pre.report {
   background: rgba(74, 142, 255, 0.18);
   border: 1px solid rgba(74, 142, 255, 0.5);
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: visible;
   z-index: 2;
   box-sizing: border-box;
+}
+
+/* Выполнено в выбранный календарный день — лёгкая подсветка поверх цвета категории */
+.plan-slot.plan-slot--done:not([open]) {
+  box-shadow: inset 0 0 0 999px rgba(167, 243, 208, 0.2);
 }
 .plan-auto-row {
   margin-top: 0.75rem;
@@ -1504,7 +1517,15 @@ pre.task-dump, pre.report {
   margin: 0 0 0.5rem;
   font-size: 0.82rem;
 }
-.plan-slot[open] { height: auto !important; min-height: 12rem; z-index: 5; }
+.plan-slot[open] {
+  height: auto !important;
+  min-height: 12rem;
+  z-index: 5;
+  overflow-y: visible;
+}
+.plan-slot[open].plan-slot--done {
+  box-shadow: none;
+}
 .plan-slot-actions { padding: 0.5rem 0.7rem 0.7rem; background: var(--card); }
 .plan-slot-remove { margin-top: 0.5rem; }
 

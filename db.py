@@ -1993,11 +1993,67 @@ def get_tasks_for_date(user_id: int, date_str: str) -> list[dict]:
 
 # ── Daily plan slots ─────────────────────────────────────────────────────
 
+def is_task_done_on_local_date(user_id: int, date_str: str, task: dict) -> bool:
+    """Задача выполнена в указанный календарный день пользователя (UTC-окно локальной даты)."""
+    from datetime import date, timedelta
+
+    try:
+        d = date.fromisoformat(date_str)
+    except ValueError:
+        return False
+    next_str = (d + timedelta(days=1)).strftime("%Y-%m-%d")
+    start_utc = _local_date_start_utc(user_id, date_str)
+    end_utc = _local_date_start_utc(user_id, next_str)
+
+    def _in_window(ts_raw) -> bool:
+        if ts_raw is None:
+            return False
+        lc_str = str(ts_raw).strip()
+        if not lc_str:
+            return False
+        if " " in lc_str and "T" not in lc_str:
+            lc_str = lc_str.replace(" ", "T", 1)
+        try:
+            return start_utc <= lc_str < end_utc
+        except TypeError:
+            return False
+
+    if task.get("is_routine"):
+        return _in_window(task.get("last_completed_at"))
+    if (str(task.get("status") or "").strip().lower()) == "done":
+        return _in_window(task.get("completed_at"))
+    return False
+
+
+def delete_plan_slots_for_task_on_date(
+    user_id: int, task_id: int, date_str: str
+) -> int:
+    """Удаляет слоты задачи на дату (для пересборки после смены блока утро/день/вечер)."""
+    return _execute(
+        "DELETE FROM daily_plan_slots WHERE user_id = %s AND plan_date = %s AND task_id = %s",
+        (user_id, date_str, int(task_id)),
+    )
+
+
+def refresh_today_plan_slots_after_bucket_change(user_id: int, task_id: int) -> None:
+    """Пересоздаёт слот задачи на «сегодня» по актуальному time_of_day / due_time."""
+    today_str = user_local_date_offset(user_id, 0)
+    s = get_settings(user_id)
+    try:
+        gs = int(s.get("plan_grid_start_min", DEFAULT_SETTINGS["plan_grid_start_min"]))
+    except (TypeError, ValueError):
+        gs = int(DEFAULT_SETTINGS["plan_grid_start_min"])
+    gs = max(0, min(gs, 23 * 60 + 55))
+    gs = (gs // 5) * 5
+    delete_plan_slots_for_task_on_date(user_id, task_id, today_str)
+    ensure_plan_slots_from_due_time(user_id, today_str, gs)
+
+
 def get_plan_slots(user_id: int, date_str: str) -> list[dict]:
     """Возвращает запланированные слоты на дату вместе с данными задач.
 
     Поля результата: id (slot_id), task_id, start_min, duration_min, text,
-    color, emoji, is_routine, status, due_date, estimate_min.
+    color, emoji, is_routine, status, due_date, estimate_min, completed_at.
     """
     rows = _fetchall(
         "SELECT s.id AS slot_id, s.task_id, s.start_min, s.duration_min, "
@@ -2005,7 +2061,7 @@ def get_plan_slots(user_id: int, date_str: str) -> list[dict]:
         "       COALESCE(t.is_routine, FALSE) AS is_routine, "
         "       t.status, t.due_date, t.due_time, t.project_id, "
         "       COALESCE(t.estimate_min, 0) AS estimate_min, "
-        "       t.last_completed_at, t.repeat_day "
+        "       t.last_completed_at, t.repeat_day, t.completed_at "
         "FROM daily_plan_slots s JOIN tasks t ON t.id = s.task_id "
         "WHERE s.user_id = %s AND s.plan_date = %s "
         "ORDER BY s.start_min, s.id",

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block main_extra_class %} container--plan{% endblock %}
 {% block title %}Планирование — {{ date_label }}{% endblock %}
 {% block top_title %}Планирование{% endblock %}
 {% block content %}
@@ -34,7 +35,7 @@
         <div class="plan-grid plan-grid--period"
              style="--plan-step:{{ slot_step_min }}; --plan-row-h:{{ pr }}px; min-height: {{ period.grid_h }}px;">
           {% for s in period.slots %}
-          <details class="plan-slot{% if s.color %} has-color color-{{ s.color }}{% endif %}"
+          <details class="plan-slot{% if s.done_on_date %} plan-slot--done{% endif %}{% if s.color %} has-color color-{{ s.color }}{% endif %}"
                    style="top: {{ s.top_px }}px; height: {{ s.height_px }}px;">
             <summary class="plan-slot-summary">
               <span class="plan-slot-text">{{ s.text }}</span>

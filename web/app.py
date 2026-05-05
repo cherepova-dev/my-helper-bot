@@ -1399,6 +1399,16 @@ async def page_plan(request: Request):
         start = int(s["start_min"])
         dur = int(s["duration_min"])
         total_planned += dur
+        done_on_date = db.is_task_done_on_local_date(
+            uid,
+            date_str,
+            {
+                "is_routine": bool(s.get("is_routine")),
+                "status": s.get("status"),
+                "completed_at": s.get("completed_at"),
+                "last_completed_at": s.get("last_completed_at"),
+            },
+        )
         slot_blocks.append(
             {
                 "slot_id": int(s["slot_id"]),
@@ -1411,6 +1421,7 @@ async def page_plan(request: Request):
                 "start_label": _format_min_as_hhmm(start),
                 "end_label": _format_min_as_hhmm(start + dur),
                 "duration_label": _humanize_minutes(dur),
+                "done_on_date": done_on_date,
             }
         )
 

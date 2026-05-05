@@ -520,6 +520,7 @@ def set_task_time_bucket_by_id(user_id: int, task_id: int, bucket: str) -> dict[
         updated = db.update_task(task_id, user_id, time_of_day=None)
         if updated:
             db.ensure_today_sort_tail(user_id, task_id)
+            db.refresh_today_plan_slots_after_bucket_change(user_id, task_id)
             return {"ok": True, "message": "Время суток снято."}
         return {"ok": False, "message": "Не удалось обновить."}
     if b not in ("утро", "день", "вечер", "ночь"):
@@ -530,6 +531,7 @@ def set_task_time_bucket_by_id(user_id: int, task_id: int, bucket: str) -> dict[
     updated = db.update_task(task_id, user_id, time_of_day=b, due_time=None)
     if updated:
         db.ensure_today_sort_tail(user_id, task_id)
+        db.refresh_today_plan_slots_after_bucket_change(user_id, task_id)
         return {"ok": True, "message": "Время суток обновлено."}
     return {"ok": False, "message": "Не удалось обновить."}
 

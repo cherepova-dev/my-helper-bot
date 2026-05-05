@@ -8,7 +8,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Год помощник">
   <link rel="icon" href="/static/app-icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/static/app-icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="manifest" href="/static/site.webmanifest">
   <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -49,7 +51,7 @@
         <button type="button" class="burger" data-open-nav aria-controls="app-sidebar" aria-expanded="false" aria-label="Открыть меню">☰</button>
         <span class="topbar-title">{% block top_title %}Помощник{% endblock %}</span>
       </header>
-      <main class="container">
+      <main class="container{% block main_extra_class %}{% endblock %}">
         {% set _flash = consume_flash(request) %}
         {% if _flash.msg %}
         <p class="flash {{ _flash.kind }} global-flash" role="status">{{ _flash.msg }}</p>
