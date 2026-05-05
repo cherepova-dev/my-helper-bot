@@ -17,13 +17,6 @@
       {% endfor %}
     </nav>
     <p class="plan-cal-meta muted">{{ date_label }}{% if is_today %} · сегодня{% elif is_past %} · прошло{% endif %} · запланировано {{ total_planned_label }}{% if backlog_count %} · вне плана: {{ backlog_count }}{% endif %}</p>
-    <details class="plan-cal-jump">
-      <summary class="muted plan-cal-jump-sum">Другая дата…</summary>
-      <form method="get" action="/plan" class="plan-date-form plan-date-form--inline">
-        <input type="date" name="date" value="{{ date_str }}" aria-label="Дата">
-        <button type="submit" class="btn-primary">Перейти</button>
-      </form>
-    </details>
   </section>
 
   <section class="card plan-grid-card">

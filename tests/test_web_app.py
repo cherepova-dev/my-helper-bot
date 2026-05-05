@@ -171,3 +171,32 @@ def test_plan_autoplaces_routine_estimate_only(client):
     r = client.get("/plan?date=2026-05-06")
     assert r.status_code == 200
     assert tid in r.text
+
+
+def test_plan_routine_with_stale_due_date_still_autoplaces(client):
+    """Рутина с «чужой» due_date в БД всё равно попадает в план по repeat_day (ежедневно)."""
+    _signup(client)
+    _promote_session_user_admin()
+    import db
+
+    u = db.find_user_by_email("user@example.com")
+    assert u
+    row = db.add_task(
+        user_id=u["id"],
+        text="зарядка тест",
+        category_emoji="🔁",
+        category_name="Спорт",
+        is_routine=True,
+        repeat_day="ежедневно",
+        time_of_day="утро",
+        due_date="2026-04-01",
+    )
+    assert row
+    db.set_task_estimate(u["id"], int(row["id"]), 15)
+    tid = int(row["id"])
+
+    assert any(int(t["id"]) == tid for t in db.get_tasks_for_date(u["id"], "2026-05-06"))
+
+    r = client.get("/plan?date=2026-05-06")
+    assert r.status_code == 200
+    assert str(tid) in r.text

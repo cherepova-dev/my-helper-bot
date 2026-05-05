@@ -1368,15 +1368,11 @@ async def page_plan(request: Request):
         )
 
     other_tasks: list[dict] = []
-    extras = db.get_active_tasks_ordered(uid)
-    db.attach_project_labels(uid, extras)
     day_task_ids = {int(t["id"]) for t in day_tasks}
+    extras = db.get_active_tasks_for_plan_sidebar(uid, planned_task_ids | day_task_ids)
+    db.attach_project_labels(uid, extras)
     for t in extras:
         tid = int(t["id"])
-        if tid in day_task_ids or tid in planned_task_ids:
-            continue
-        if t.get("is_routine"):
-            continue
         pref_o = db._preferred_plan_start_min(t, gs)
         suggest_o = max(int(pref_o), gs) if pref_o is not None else gs
         suggest_o = min(suggest_o, PLAN_DAY_END_MIN - 5)

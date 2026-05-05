@@ -1510,6 +1510,35 @@ def get_active_tasks_ordered(user_id: int) -> list[dict]:
         )
 
 
+def get_active_tasks_for_plan_sidebar(user_id: int, exclude_ids: set[int]) -> list[dict]:
+    """Не-рутины для блока «другие задачи» на /plan без загрузки всего списка задач."""
+    try:
+        ex = {int(x) for x in exclude_ids if x is not None}
+        if not ex:
+            return _fetchall(
+                "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+                "AND COALESCE(is_routine, FALSE) = FALSE "
+                "ORDER BY COALESCE(CAST(due_date AS TEXT), '9999-12-31'), "
+                "COALESCE(CAST(due_time AS TEXT), ''), id",
+                (user_id,),
+            )
+        ph = ",".join(["%s"] * len(ex))
+        params = (user_id, *sorted(ex))
+        return _fetchall(
+            "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
+            "AND COALESCE(is_routine, FALSE) = FALSE "
+            f"AND id NOT IN ({ph}) "
+            "ORDER BY COALESCE(CAST(due_date AS TEXT), '9999-12-31'), "
+            "COALESCE(CAST(due_time AS TEXT), ''), id",
+            params,
+        )
+    except Exception as e:
+        logger.warning("get_active_tasks_for_plan_sidebar fallback: %s", e)
+        all_rows = get_active_tasks_ordered(user_id)
+        ex = {int(x) for x in exclude_ids if x is not None}
+        return [r for r in all_rows if not r.get("is_routine") and int(r["id"]) not in ex]
+
+
 def transfer_overdue_tasks(user_id: int) -> int:
     """Переносит просроченные активные задачи (due_date < сегодня) на сегодня. Возвращает число перенесённых."""
     today_str, _ = _get_today_in_user_tz(user_id)
@@ -1952,7 +1981,9 @@ def get_tasks_for_date(user_id: int, date_str: str) -> list[dict]:
 
     Логика близка к get_today_tasks, но для произвольной даты в TZ пользователя.
     Рутины, выполненные в этот день (last_completed_at в окне даты), исключаются.
-    Задачи с due_date IS NULL — не включаются (мы хотим именно «то, что назначено на дату»).
+    Обычные задачи: только с due_date = date_str (без даты в список на день не попадают).
+    Рутины: попадают по repeat_day независимо от устаревшего due_date в БД (иначе часть
+    рутин пропадала бы в плане при случайно заполненной дате).
     """
     from datetime import date as _date
 
@@ -1967,7 +1998,7 @@ def get_tasks_for_date(user_id: int, date_str: str) -> list[dict]:
 
     rows = _fetchall(
         "SELECT * FROM tasks WHERE user_id = %s AND status = 'active' "
-        "AND (due_date = %s OR (COALESCE(is_routine, FALSE) = TRUE AND due_date IS NULL)) "
+        "AND (due_date = %s OR COALESCE(is_routine, FALSE) = TRUE) "
         "ORDER BY id",
         (user_id, date_str),
     )
@@ -1986,6 +2017,10 @@ def get_tasks_for_date(user_id: int, date_str: str) -> list[dict]:
             out.append(t)
         else:
             if t.get("project_id") and not t.get("due_date"):
+                continue
+            td_raw = t.get("due_date")
+            td = (str(td_raw).strip()[:10] if td_raw is not None else "") or ""
+            if len(td) < 10 or td != date_str:
                 continue
             out.append(t)
     return out
@@ -2035,9 +2070,12 @@ def delete_plan_slots_for_task_on_date(
     )
 
 
-def refresh_today_plan_slots_after_bucket_change(user_id: int, task_id: int) -> None:
-    """Пересоздаёт слот задачи на «сегодня» по актуальному time_of_day / due_time."""
-    today_str = user_local_date_offset(user_id, 0)
+def refresh_plan_slots_for_task_on_date(user_id: int, task_id: int, date_str: str) -> None:
+    """Удаляет слоты задачи на дату и заново создаёт по актуальным полям (блок суток, время)."""
+    raw = (date_str or "").strip()
+    if len(raw) < 10:
+        return
+    ds = raw[:10]
     s = get_settings(user_id)
     try:
         gs = int(s.get("plan_grid_start_min", DEFAULT_SETTINGS["plan_grid_start_min"]))
@@ -2045,8 +2083,8 @@ def refresh_today_plan_slots_after_bucket_change(user_id: int, task_id: int) -> 
         gs = int(DEFAULT_SETTINGS["plan_grid_start_min"])
     gs = max(0, min(gs, 23 * 60 + 55))
     gs = (gs // 5) * 5
-    delete_plan_slots_for_task_on_date(user_id, task_id, today_str)
-    ensure_plan_slots_from_due_time(user_id, today_str, gs)
+    delete_plan_slots_for_task_on_date(user_id, task_id, ds)
+    ensure_plan_slots_from_due_time(user_id, ds, gs)
 
 
 def get_plan_slots(user_id: int, date_str: str) -> list[dict]:
@@ -2287,13 +2325,22 @@ def ensure_plan_slots_from_due_time(
 
     plan_day_start_min = grid_start_min
     day_end_min = 24 * 60
+
+    day_tasks = get_tasks_for_date(user_id, date_str)
+    allowed_ids = {int(t["id"]) for t in day_tasks}
+
+    slots = get_plan_slots(user_id, date_str)
+    for s in slots:
+        if int(s["task_id"]) not in allowed_ids:
+            remove_plan_slot(user_id, int(s["slot_id"]))
     slots = get_plan_slots(user_id, date_str)
     planned = {int(s["task_id"]) for s in slots}
+    if allowed_ids <= planned:
+        return 0
+
     intervals = [
         (int(s["start_min"]), int(s["start_min"]) + int(s["duration_min"])) for s in slots
     ]
-
-    day_tasks = get_tasks_for_date(user_id, date_str)
 
     day_tasks_sorted = sorted(
         day_tasks, key=lambda t: _ensure_plan_sort_key(t, grid_start_min)
@@ -2738,14 +2785,35 @@ def update_task(task_id: int, user_id: int, **kwargs) -> dict | None:
         params.append(val)
     params.extend([task_id, user_id])
 
+    plan_touch = fields.keys() & {"due_time", "time_of_day", "due_date"}
+    before_plan = None
+    if plan_touch:
+        before_plan = _fetchone(
+            "SELECT due_date, due_time, time_of_day FROM tasks WHERE id = %s AND user_id = %s",
+            (task_id, user_id),
+        )
+
     _execute(
         f"UPDATE tasks SET {', '.join(set_parts)} WHERE id = %s AND user_id = %s",
         tuple(params),
     )
-    return _fetchone(
+    row = _fetchone(
         "SELECT * FROM tasks WHERE id = %s AND user_id = %s",
         (task_id, user_id),
     )
+
+    if plan_touch and before_plan is not None and row is not None:
+        today_str = user_local_date_offset(user_id, 0)
+        dates: set[str] = {today_str}
+        for snap in (before_plan, row):
+            raw_d = snap.get("due_date")
+            ds = (str(raw_d).strip()[:10] if raw_d is not None else "") or ""
+            if len(ds) == 10:
+                dates.add(ds)
+        for ds in dates:
+            refresh_plan_slots_for_task_on_date(user_id, task_id, ds)
+
+    return row
 
 
 def delete_task(task_id: int, user_id: int) -> bool:
