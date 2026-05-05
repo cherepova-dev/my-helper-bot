@@ -2331,8 +2331,19 @@ def ensure_plan_slots_from_due_time(
 
     slots = get_plan_slots(user_id, date_str)
     for s in slots:
-        if int(s["task_id"]) not in allowed_ids:
-            remove_plan_slot(user_id, int(s["slot_id"]))
+        tid = int(s["task_id"])
+        if tid in allowed_ids:
+            continue
+        # Выполненные в этот день не в get_tasks_for_date — слот оставляем (зелёная метка в UI).
+        done_row = {
+            "is_routine": bool(s.get("is_routine")),
+            "status": s.get("status"),
+            "completed_at": s.get("completed_at"),
+            "last_completed_at": s.get("last_completed_at"),
+        }
+        if is_task_done_on_local_date(user_id, date_str, done_row):
+            continue
+        remove_plan_slot(user_id, int(s["slot_id"]))
     slots = get_plan_slots(user_id, date_str)
     planned = {int(s["task_id"]) for s in slots}
     if allowed_ids <= planned:

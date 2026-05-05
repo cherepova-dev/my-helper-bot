@@ -200,3 +200,40 @@ def test_plan_routine_with_stale_due_date_still_autoplaces(client):
     r = client.get("/plan?date=2026-05-06")
     assert r.status_code == 200
     assert str(tid) in r.text
+
+
+def test_ensure_plan_keeps_slot_when_task_done_that_day(monkeypatch, tmp_path):
+    """Слот не снимается при prune: задача выполнена в дату плана и выпала из активных."""
+    monkeypatch.setenv("BOT_DB_PATH", str(tmp_path / "plan_done.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    sys.modules.pop("db", None)
+    import db
+
+    u = db.create_user_with_email("plan-done@example.com", "h", "")
+    uid = int(u["id"])
+    plan_date = "2026-09-01"
+    row = db.add_task(
+        user_id=uid,
+        text="сделать отчёт",
+        category_emoji="📝",
+        category_name="Работа",
+        due_date=plan_date,
+        time_of_day="день",
+    )
+    assert row
+    tid = int(row["id"])
+    db.set_task_estimate(uid, tid, 25)
+
+    db.ensure_plan_slots_from_due_time(uid, plan_date, 9 * 60)
+    slots1 = db.get_plan_slots(uid, plan_date)
+    assert len(slots1) == 1
+
+    db._execute(
+        "UPDATE tasks SET status = 'done', completed_at = %s WHERE id = %s AND user_id = %s",
+        ("2026-09-01T14:00:00+00:00", tid, uid),
+    )
+
+    db.ensure_plan_slots_from_due_time(uid, plan_date, 9 * 60)
+    slots2 = db.get_plan_slots(uid, plan_date)
+    assert len(slots2) == 1
+    assert int(slots2[0]["task_id"]) == tid
