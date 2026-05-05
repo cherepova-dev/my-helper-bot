@@ -2028,35 +2028,98 @@ def get_tasks_for_date(user_id: int, date_str: str) -> list[dict]:
 
 # ── Daily plan slots ─────────────────────────────────────────────────────
 
-def is_task_done_on_local_date(user_id: int, date_str: str, task: dict) -> bool:
-    """Задача выполнена в указанный календарный день пользователя (UTC-окно локальной даты)."""
-    from datetime import date, timedelta
+def _task_row_is_routine(task: dict) -> bool:
+    """Устойчиво к int/SQLite/PG и к строковым флагам."""
+    v = task.get("is_routine")
+    if v is True:
+        return True
+    if v is False or v is None:
+        return False
+    if isinstance(v, (int, float)):
+        return int(v) != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "t", "yes")
+    return bool(v)
+
+
+def _plan_ts_in_user_local_day(user_id: int, date_str: str, ts_raw) -> bool:
+    """Попадает ли отметка времени в календарный день пользователя (границы как у отчётов)."""
+    from datetime import date as date_cls
+
+    if ts_raw is None:
+        return False
+    try:
+        date_cls.fromisoformat(date_str)
+    except ValueError:
+        return False
+
+    def _to_utc_aware_dt(val):
+        if isinstance(val, datetime):
+            if val.tzinfo is None:
+                val = val.replace(tzinfo=timezone.utc)
+            return val.astimezone(timezone.utc)
+        s = str(val).strip()
+        if not s:
+            raise ValueError("empty ts")
+        if " " in s and "T" not in s:
+            s = s.replace(" ", "T", 1)
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s).astimezone(timezone.utc)
 
     try:
-        d = date.fromisoformat(date_str)
+        d = date_cls.fromisoformat(date_str)
+        next_str = (d + timedelta(days=1)).strftime("%Y-%m-%d")
+        start_s = _local_date_start_utc(user_id, date_str)
+        end_s = _local_date_start_utc(user_id, next_str)
+        t = _to_utc_aware_dt(ts_raw)
+        sdt = _to_utc_aware_dt(start_s)
+        edt = _to_utc_aware_dt(end_s)
+        return sdt <= t < edt
+    except Exception:
+        return False
+
+
+def routine_completed_on_local_date(user_id: int, task_id: int, date_str: str) -> bool:
+    """Есть ли запись в журнале routine_completions в локальный календарный день."""
+    from datetime import date as date_cls
+
+    try:
+        d = date_cls.fromisoformat(date_str)
     except ValueError:
         return False
     next_str = (d + timedelta(days=1)).strftime("%Y-%m-%d")
-    start_utc = _local_date_start_utc(user_id, date_str)
-    end_utc = _local_date_start_utc(user_id, next_str)
+    start_s = _local_date_start_utc(user_id, date_str)
+    end_s = _local_date_start_utc(user_id, next_str)
+    try:
+        row = _fetchone(
+            "SELECT 1 AS ok FROM routine_completions WHERE user_id = %s AND task_id = %s "
+            "AND completed_at >= %s AND completed_at < %s LIMIT 1",
+            (user_id, int(task_id), start_s, end_s),
+        )
+        return row is not None
+    except Exception:
+        return False
 
-    def _in_window(ts_raw) -> bool:
-        if ts_raw is None:
-            return False
-        lc_str = str(ts_raw).strip()
-        if not lc_str:
-            return False
-        if " " in lc_str and "T" not in lc_str:
-            lc_str = lc_str.replace(" ", "T", 1)
-        try:
-            return start_utc <= lc_str < end_utc
-        except TypeError:
-            return False
 
-    if task.get("is_routine"):
-        return _in_window(task.get("last_completed_at"))
+def is_task_done_on_local_date(user_id: int, date_str: str, task: dict) -> bool:
+    """Задача выполнена в указанный календарный день пользователя (UTC-окно локальной даты)."""
+    tid = task.get("task_id")
+    if tid is None and task.get("id") is not None:
+        tid = task.get("id")
+    try:
+        tid_int = int(tid) if tid is not None else None
+    except (TypeError, ValueError):
+        tid_int = None
+
+    if _task_row_is_routine(task):
+        if _plan_ts_in_user_local_day(user_id, date_str, task.get("last_completed_at")):
+            return True
+        if tid_int is not None:
+            return routine_completed_on_local_date(user_id, tid_int, date_str)
+        return False
     if (str(task.get("status") or "").strip().lower()) == "done":
-        return _in_window(task.get("completed_at"))
+        return _plan_ts_in_user_local_day(user_id, date_str, task.get("completed_at"))
     return False
 
 
@@ -2336,7 +2399,8 @@ def ensure_plan_slots_from_due_time(
             continue
         # Выполненные в этот день не в get_tasks_for_date — слот оставляем (зелёная метка в UI).
         done_row = {
-            "is_routine": bool(s.get("is_routine")),
+            "task_id": tid,
+            "is_routine": s.get("is_routine"),
             "status": s.get("status"),
             "completed_at": s.get("completed_at"),
             "last_completed_at": s.get("last_completed_at"),

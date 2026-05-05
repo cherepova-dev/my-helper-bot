@@ -1399,7 +1399,8 @@ async def page_plan(request: Request):
             uid,
             date_str,
             {
-                "is_routine": bool(s.get("is_routine")),
+                "task_id": int(s["task_id"]),
+                "is_routine": s.get("is_routine"),
                 "status": s.get("status"),
                 "completed_at": s.get("completed_at"),
                 "last_completed_at": s.get("last_completed_at"),

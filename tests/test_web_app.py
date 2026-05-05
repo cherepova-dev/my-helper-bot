@@ -237,3 +237,53 @@ def test_ensure_plan_keeps_slot_when_task_done_that_day(monkeypatch, tmp_path):
     slots2 = db.get_plan_slots(uid, plan_date)
     assert len(slots2) == 1
     assert int(slots2[0]["task_id"]) == tid
+
+
+def test_ensure_plan_keeps_routine_slot_when_completed(monkeypatch, tmp_path):
+    """Рутина после отметки «сделано» остаётся в слотах плана (зелёная метка)."""
+    monkeypatch.setenv("BOT_DB_PATH", str(tmp_path / "routine_plan.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    sys.modules.pop("db", None)
+    import db
+
+    u = db.create_user_with_email("routine-plan@example.com", "h", "")
+    uid = int(u["id"])
+    plan_date = "2026-10-03"
+    row = db.add_task(
+        user_id=uid,
+        text="зарядка план",
+        category_emoji="🔁",
+        category_name="Спорт",
+        is_routine=True,
+        repeat_day="ежедневно",
+        time_of_day="утро",
+    )
+    tid = int(row["id"])
+    db.set_task_estimate(uid, tid, 10)
+
+    db.ensure_plan_slots_from_due_time(uid, plan_date, 9 * 60)
+    assert len(db.get_plan_slots(uid, plan_date)) == 1
+
+    # Отметка «выполнено» в календарный день плана (не «сейчас», иначе другой день).
+    done_iso = "2026-10-03T14:00:00+00:00"
+    db._execute(
+        "UPDATE tasks SET last_completed_at = %s WHERE id = %s AND user_id = %s",
+        (done_iso, tid, uid),
+    )
+    db.log_routine_completion(uid, tid, done_iso)
+
+    db.ensure_plan_slots_from_due_time(uid, plan_date, 9 * 60)
+    slots = db.get_plan_slots(uid, plan_date)
+    assert len(slots) == 1
+    assert int(slots[0]["task_id"]) == tid
+    assert db.is_task_done_on_local_date(
+        uid,
+        plan_date,
+        {
+            "task_id": tid,
+            "is_routine": slots[0].get("is_routine"),
+            "status": slots[0].get("status"),
+            "completed_at": slots[0].get("completed_at"),
+            "last_completed_at": slots[0].get("last_completed_at"),
+        },
+    )
