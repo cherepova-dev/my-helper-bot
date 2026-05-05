@@ -82,7 +82,7 @@
       <form method="post" action="/plan/auto_place" class="plan-auto-row plan-auto-row--compact">
         <input type="hidden" name="date" value="{{ date_str }}">
         <button type="submit" class="btn-primary plan-auto-btn">Разложить бэклог по порядку</button>
-        <span class="muted plan-auto-hint">Свободные окна подряд; длительность из «⋯», иначе 30 мин.</span>
+        <span class="muted plan-auto-hint">Свободные окна с учётом блока утро/день/вечер и времени задачи; длительность из «⋯», иначе 30 мин.</span>
       </form>
       {% endif %}
       <h3 class="plan-tools-subtitle">Задачи на этот день (ещё не в расписании)</h3>
@@ -104,7 +104,7 @@
               <input type="hidden" name="task_id" value="{{ row.task_id }}">
               <input type="hidden" name="date" value="{{ date_str }}">
               <label class="plan-add-label">Время старта
-                <input type="time" name="start" step="300" value="09:00" required>
+                <input type="time" name="start" step="300" value="{{ row.suggested_start }}" required>
               </label>
               <label class="plan-add-label">Длительность
                 <select name="duration_min" required aria-label="Длительность">
@@ -142,7 +142,7 @@
                 <input type="hidden" name="task_id" value="{{ row.task_id }}">
                 <input type="hidden" name="date" value="{{ date_str }}">
                 <label class="plan-add-label">Время старта
-                  <input type="time" name="start" step="300" value="09:00" required>
+                  <input type="time" name="start" step="300" value="{{ row.suggested_start }}" required>
                 </label>
                 <label class="plan-add-label">Длительность
                   <select name="duration_min" required aria-label="Длительность">

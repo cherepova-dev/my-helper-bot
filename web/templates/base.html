@@ -4,20 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Помощник{% endblock %}</title>
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Год помощник">
+  <link rel="icon" href="/static/app-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/app-icon.svg">
+  <link rel="manifest" href="/static/site.webmanifest">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  {% set path = request.url.path %}
   <div id="app-shell" class="app-shell">
     <div class="nav-scrim" data-close-nav aria-hidden="true"></div>
     <aside class="sidebar" id="app-sidebar" aria-label="Основное меню">
       <div class="sidebar-head">
         <a href="/" class="sidebar-brand{% if path == '/' %} is-active{% endif %}">Помощник</a>
       </div>
-      {% set path = request.url.path %}
       <nav class="sidebar-nav" aria-label="Разделы приложения">
         <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Обзор</span></div>
         <a href="/today" class="nav-link{% if path.startswith('/today') %} is-active{% endif %}">Сегодня</a>
+        {% if request.state.is_admin %}
         <a href="/plan" class="nav-link{% if path.startswith('/plan') %} is-active{% endif %}">Планирование</a>
+        {% endif %}
         <div class="nav-group-label" role="presentation"><span class="nav-group-label-inner">Задачи</span></div>
         <a href="/tasks" class="nav-link{% if path == '/tasks' %} is-active{% endif %}">Все задачи</a>
         <a href="/projects" class="nav-link{% if path.startswith('/projects') %} is-active{% endif %}">Проекты</a>

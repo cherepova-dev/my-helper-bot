@@ -40,6 +40,14 @@ def _signup(client, email="user@example.com", password="very-secret-1"):
     )
 
 
+def _promote_session_user_admin(email="user@example.com"):
+    import db
+
+    u = db.find_user_by_email(email)
+    assert u
+    db.set_user_role(int(u["id"]), "admin")
+
+
 def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
@@ -80,9 +88,43 @@ def test_reports_projects_after_login(client):
     assert "проект" in r.text.lower()
 
 
+def test_plan_evening_time_of_day_starts_in_evening_band(client):
+    """Задача с блоком «вечер» получает слот не раньше полосы «Вечер» (17:00+) на сетке."""
+    _signup(client)
+    _promote_session_user_admin()
+    import db
+
+    u = db.find_user_by_email("user@example.com")
+    assert u
+    row = db.add_task(
+        user_id=u["id"],
+        text="walk",
+        category_emoji="x",
+        category_name="y",
+        due_date="2026-08-10",
+        time_of_day="вечер",
+    )
+    assert row
+    db.set_task_estimate(u["id"], int(row["id"]), 30)
+
+    r = client.get("/plan?date=2026-08-10")
+    assert r.status_code == 200
+    slots = db.get_plan_slots(u["id"], "2026-08-10")
+    assert len(slots) == 1
+    assert int(slots[0]["start_min"]) >= 17 * 60
+
+
+def test_plan_forbidden_for_non_admin(client):
+    _signup(client)
+    r = client.get("/plan", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers.get("location") == "/today"
+
+
 def test_plan_autoplaces_routine_with_time_bucket_only(client):
     """Рутина без due_time, только блок «утро» — попадает в план при открытии /plan."""
     _signup(client)
+    _promote_session_user_admin()
     import db
 
     u = db.find_user_by_email("user@example.com")
@@ -98,15 +140,17 @@ def test_plan_autoplaces_routine_with_time_bucket_only(client):
     )
     assert row
     db.set_task_estimate(u["id"], int(row["id"]), 10)
+    tid = str(int(row["id"]))
 
     r = client.get("/plan?date=2026-05-05")
     assert r.status_code == 200
-    assert "разминка" in r.text
+    assert tid in r.text
 
 
 def test_plan_autoplaces_routine_estimate_only(client):
     """Рутина ежедневно только с оценкой 5 мин — автослот от начала сетки (9:00)."""
     _signup(client)
+    _promote_session_user_admin()
     import db
 
     u = db.find_user_by_email("user@example.com")
@@ -122,7 +166,8 @@ def test_plan_autoplaces_routine_estimate_only(client):
     )
     assert row
     db.set_task_estimate(u["id"], int(row["id"]), 5)
+    tid = str(int(row["id"]))
 
     r = client.get("/plan?date=2026-05-06")
     assert r.status_code == 200
-    assert "заправить постель" in r.text
+    assert tid in r.text

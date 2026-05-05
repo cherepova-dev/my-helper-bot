@@ -191,6 +191,10 @@ def _bootstrap_password_from_env() -> None:
 @asynccontextmanager
 async def _app_lifespan(_app: FastAPI):
     try:
+        db.sync_admin_roles()
+    except Exception as exc:
+        print(f"[roles] sync_admin_roles: {exc}", file=sys.stderr)
+    try:
         _bootstrap_password_from_env()
     except Exception as exc:
         print(f"[bootstrap] неожиданная ошибка: {exc}", file=sys.stderr)
@@ -296,6 +300,16 @@ class _OriginCsrfMiddleware(BaseHTTPMiddleware):
         )
 
 
+class _AdminFlagMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request.state.is_admin = False
+        row = web_auth.get_current_user_row(request)
+        if row:
+            request.state.is_admin = db.is_admin_user(row)
+        return await call_next(request)
+
+
+app.add_middleware(_AdminFlagMiddleware)
 app.add_middleware(_OriginCsrfMiddleware)
 app.add_middleware(
     SessionMiddleware,
@@ -368,7 +382,7 @@ def resolve_web_user_row(request: Request | None = None) -> dict:
     if only:
         return only
 
-        raise RuntimeError(
+    raise RuntimeError(
         "Не удалось определить пользователя: войдите в систему или зарегистрируйтесь."
     )
 
@@ -383,6 +397,21 @@ def _is_authenticated(request: Request) -> bool:
     Старый флаг auth=True больше не принимается (миграция аутентификации).
     """
     return web_auth.is_authenticated(request)
+
+
+def _is_request_admin(request: Request) -> bool:
+    return bool(getattr(request.state, "is_admin", False))
+
+
+def _plan_admin_denied(request: Request) -> RedirectResponse | JSONResponse:
+    if _wants_json(request):
+        return JSONResponse(
+            {"ok": False, "message": "Раздел «Планирование» доступен только администратору."},
+            status_code=403,
+        )
+    request.session["flash_msg"] = "Раздел «Планирование» доступен только администратору."
+    request.session["flash_kind"] = "err"
+    return RedirectResponse("/today", status_code=302)
 
 
 @app.get("/health")
@@ -519,6 +548,7 @@ async def signup_post(
             status_code=500,
         )
 
+    db.sync_admin_roles()
     web_auth.login_user(request, int(user["id"]))
     return RedirectResponse("/", status_code=302)
 
@@ -1266,7 +1296,10 @@ def _plan_auto_place_backlog(uid: int, date_str: str) -> dict[str, str | bool]:
         dur = max(5, min(dur_raw, 24 * 60 - 1))
         if dur % 5:
             dur += 5 - (dur % 5)
-        start = _plan_find_gap_start(merged, dur, gs, PLAN_DAY_END_MIN, gs)
+        pref = db._preferred_plan_start_min(t, gs)
+        earliest = max(int(pref), gs) if pref is not None else gs
+        earliest = min(earliest, PLAN_DAY_END_MIN - dur)
+        start = _plan_find_gap_start(merged, dur, earliest, PLAN_DAY_END_MIN, gs)
         if start is None:
             skipped += 1
             continue
@@ -1288,6 +1321,8 @@ def _plan_auto_place_backlog(uid: int, date_str: str) -> dict[str, str | bool]:
 async def page_plan(request: Request):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
+    if not _is_request_admin(request):
+        return _plan_admin_denied(request)
     from bot_v2 import _format_date_human
     from datetime import date as _date, timedelta as _td
 
@@ -1316,6 +1351,9 @@ async def page_plan(request: Request):
         if int(t["id"]) in planned_task_ids:
             continue
         emoji = _task_row_emoji(t)
+        pref = db._preferred_plan_start_min(t, gs)
+        suggest_m = max(int(pref), gs) if pref is not None else gs
+        suggest_m = min(suggest_m, PLAN_DAY_END_MIN - 5)
         backlog.append(
             {
                 "task_id": int(t["id"]),
@@ -1325,6 +1363,7 @@ async def page_plan(request: Request):
                 "is_routine": bool(t.get("is_routine")),
                 "estimate_min": int(t.get("estimate_min") or 0),
                 "project_label": (t.get("project_title") or "").strip(),
+                "suggested_start": _format_min_as_hhmm(suggest_m),
             }
         )
 
@@ -1338,6 +1377,9 @@ async def page_plan(request: Request):
             continue
         if t.get("is_routine"):
             continue
+        pref_o = db._preferred_plan_start_min(t, gs)
+        suggest_o = max(int(pref_o), gs) if pref_o is not None else gs
+        suggest_o = min(suggest_o, PLAN_DAY_END_MIN - 5)
         other_tasks.append(
             {
                 "task_id": tid,
@@ -1347,6 +1389,7 @@ async def page_plan(request: Request):
                 "estimate_min": int(t.get("estimate_min") or 0),
                 "project_label": (t.get("project_title") or "").strip(),
                 "due_date": t.get("due_date") or "",
+                "suggested_start": _format_min_as_hhmm(suggest_o),
             }
         )
 
@@ -1498,6 +1541,8 @@ async def action_plan_add_slot(
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
+    if not _is_request_admin(request):
+        return _plan_admin_denied(request)
     uid = get_user_row(request)["id"]
     start_min = _parse_hhmm_to_min(start)
     if start_min is None:
@@ -1513,6 +1558,8 @@ async def action_plan_add_slot(
 async def action_plan_auto_place(request: Request, date: str = Form(...)):
     if not _is_authenticated(request):
         return RedirectResponse("/login", status_code=302)
+    if not _is_request_admin(request):
+        return _plan_admin_denied(request)
     uid = get_user_row(request)["id"]
     date_str = (date or "").strip()[:10]
     result = _plan_auto_place_backlog(uid, date_str)
@@ -1531,6 +1578,8 @@ async def action_plan_update_slot(
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
+    if not _is_request_admin(request):
+        return _plan_admin_denied(request)
     uid = get_user_row(request)["id"]
     start_min = _parse_hhmm_to_min(start)
     if start_min is None:
@@ -1552,6 +1601,8 @@ async def action_plan_remove_slot(
         if _wants_json(request):
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
+    if not _is_request_admin(request):
+        return _plan_admin_denied(request)
     uid = get_user_row(request)["id"]
     result = db.remove_plan_slot(uid, slot_id)
     if _wants_json(request):
@@ -1571,11 +1622,14 @@ async def action_set_estimate(
             return JSONResponse({"ok": False, "message": "Требуется вход."}, status_code=401)
         return RedirectResponse("/login", status_code=302)
     uid = get_user_row(request)["id"]
+    next_dest = (next or "").strip() or "/today"
+    if next_dest.startswith("/plan") and not _is_request_admin(request):
+        next_dest = "/today"
     ok = db.set_task_estimate(uid, task_id, int(minutes))
     result = {"ok": ok, "message": "Оценка обновлена." if ok else "Не удалось обновить."}
     if _wants_json(request):
         return JSONResponse(result)
-    return _flash_redirect(request, next, result["message"], result["ok"])
+    return _flash_redirect(request, next_dest, result["message"], result["ok"])
 
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
@@ -1838,12 +1892,15 @@ async def action_settings(
     except (TypeError, ValueError):
         n = 7
     n = max(1, min(50, n))
-    pm = _parse_hhmm_to_min(plan_grid_start)
-    if pm is None:
-        pm = int(db.DEFAULT_SETTINGS["plan_grid_start_min"])
-    pm = max(0, min(pm, 23 * 60 + 55))
-    pm = (pm // 5) * 5
-    db.update_settings(uid, max_tasks_per_day=n, plan_grid_start_min=pm)
+    settings_kw: dict = {"max_tasks_per_day": n}
+    if _is_request_admin(request):
+        pm = _parse_hhmm_to_min(plan_grid_start)
+        if pm is None:
+            pm = int(db.DEFAULT_SETTINGS["plan_grid_start_min"])
+        pm = max(0, min(pm, 23 * 60 + 55))
+        pm = (pm // 5) * 5
+        settings_kw["plan_grid_start_min"] = pm
+    db.update_settings(uid, **settings_kw)
     tz_raw = (timezone or "").strip()
     if tz_raw:
         if not db.set_user_timezone(uid, tz_raw):

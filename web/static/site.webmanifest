@@ -1,0 +1,17 @@
+{
+  "name": "Год помощник",
+  "short_name": "Год помощник",
+  "description": "Список дел и рутины",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f0f",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/static/app-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

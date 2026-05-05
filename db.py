@@ -28,7 +28,12 @@ else:
     import sqlite3
 
 _conn = None
-_SQLITE_PATH = os.environ.get("BOT_DB_PATH", "bot_data.db")
+# Для SQLite: какой путь открыт в _conn (переподключение при смене BOT_DB_PATH в процессе).
+_SQLITE_OPEN_PATH: str | None = None
+
+
+def _sqlite_db_path() -> str:
+    return os.environ.get("BOT_DB_PATH", "bot_data.db")
 
 
 # ── Подключение ─────────────────────────────────────────────────────────
@@ -41,7 +46,7 @@ def _get_conn():
     операции (см. _fetchone/_fetchall/_execute — они ловят исключение
     и пробуют ещё раз).
     """
-    global _conn
+    global _conn, _SQLITE_OPEN_PATH
     if USE_PG:
         if _conn is None or getattr(_conn, "closed", 0) != 0:
             _conn = psycopg2.connect(DATABASE_URL, sslmode="require")
@@ -49,8 +54,17 @@ def _get_conn():
             _init_tables_pg()
             logger.info("PostgreSQL connected")
     else:
+        path = _sqlite_db_path()
+        if _conn is not None and _SQLITE_OPEN_PATH != path:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+            _conn = None
+            _SQLITE_OPEN_PATH = None
         if _conn is None:
-            _conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
+            _conn = sqlite3.connect(path, check_same_thread=False)
+            _SQLITE_OPEN_PATH = path
             _conn.row_factory = sqlite3.Row
             _conn.execute("PRAGMA journal_mode=WAL")
             _conn.execute("PRAGMA foreign_keys=ON")
@@ -181,6 +195,7 @@ def _init_tables_pg() -> None:
         "ALTER TABLE users ADD COLUMN password_algo TEXT DEFAULT 'argon2'",
         "ALTER TABLE users ADD COLUMN password_reset_token_hash TEXT",
         "ALTER TABLE users ADD COLUMN password_reset_expires_at TIMESTAMPTZ",
+        "ALTER TABLE users ADD COLUMN user_role TEXT DEFAULT 'user'",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower "
         "ON users (lower(email)) WHERE email IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_tasks_proj_color "
@@ -287,6 +302,7 @@ def _init_tables_sqlite() -> None:
         "ALTER TABLE users ADD COLUMN password_algo TEXT DEFAULT 'argon2'",
         "ALTER TABLE users ADD COLUMN password_reset_token_hash TEXT",
         "ALTER TABLE users ADD COLUMN password_reset_expires_at TEXT",
+        "ALTER TABLE users ADD COLUMN user_role TEXT DEFAULT 'user'",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower "
         "ON users (lower(email)) WHERE email IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_tasks_proj_color "
@@ -316,13 +332,14 @@ def _query(sql: str) -> str:
 
 def _drop_conn() -> None:
     """Помечает PG-соединение как невалидное, чтобы _get_conn() переподключился."""
-    global _conn
+    global _conn, _SQLITE_OPEN_PATH
     if _conn is not None:
         try:
             _conn.close()
         except Exception:
             pass
         _conn = None
+    _SQLITE_OPEN_PATH = None
 
 
 def _is_pg_connection_error(exc: Exception) -> bool:
@@ -497,6 +514,53 @@ def find_user_by_email(email: str) -> dict | None:
         "SELECT * FROM users WHERE lower(email) = lower(%s) LIMIT 1",
         (email.strip(),),
     )
+
+
+def is_admin_user(user_row: dict | None) -> bool:
+    if not user_row:
+        return False
+    return (str(user_row.get("user_role") or "user")).strip().lower() == "admin"
+
+
+def set_user_role(user_id: int, role: str) -> bool:
+    r = (role or "user").strip().lower()
+    if r not in ("user", "admin"):
+        return False
+    _execute("UPDATE users SET user_role = %s WHERE id = %s", (r, int(user_id)))
+    return True
+
+
+def sync_admin_roles() -> None:
+    """
+    Выставляет user_role: admin для WEB_ADMIN_EMAIL / WEB_ADMIN_EMAILS (список через запятую)
+    и для пользователя с именем, где есть «медведева» и «юлия» (регистр не важен).
+    Остальным — user.
+
+    Вызывать при старте веб-приложения и после регистрации — не из init таблиц при каждом
+    новом SQLite-соединении (иначе сбрасываются роли после ручного назначения admin).
+    """
+    raw = (os.environ.get("WEB_ADMIN_EMAILS") or os.environ.get("WEB_ADMIN_EMAIL") or "").strip()
+    env_emails = {
+        x.strip().lower() for x in raw.replace(";", ",").split(",") if x.strip()
+    }
+    try:
+        rows = _fetchall("SELECT id, email, name FROM users")
+    except Exception:
+        return
+    for r in rows:
+        uid = int(r["id"])
+        em = (str(r.get("email") or "")).strip().lower()
+        name_l = (str(r.get("name") or "")).strip().lower()
+        is_adm = False
+        if env_emails and em and em in env_emails:
+            is_adm = True
+        elif "медведева" in name_l and "юлия" in name_l:
+            is_adm = True
+        role = "admin" if is_adm else "user"
+        try:
+            _execute("UPDATE users SET user_role = %s WHERE id = %s", (role, uid))
+        except Exception:
+            pass
 
 
 def _next_synthetic_telegram_id() -> int:
@@ -2032,22 +2096,52 @@ def _due_time_to_start_min(due_time: str | None) -> int | None:
     return h * 60 + m
 
 
+def _normalize_plan_time_of_day_token(raw: str | None) -> str:
+    """Канонический блок суток для плана (синонимы: обед → день и т.д.)."""
+    tod = (raw or "").strip().lower()
+    aliases = {"обед": "день", "полдень": "день", "завтрак": "утро"}
+    return aliases.get(tod, tod)
+
+
 def _time_of_day_default_start_min(time_of_day: str | None) -> int | None:
-    """Якорное время по блоку суток (утро/день/вечер), если нет точного due_time."""
-    tod = (time_of_day or "").strip().lower()
+    """Якорное время по блоку суток (утро/день/вечер/ночь), если нет точного due_time."""
+    tod = _normalize_plan_time_of_day_token(time_of_day)
     return {
-        "утро": 8 * 60,
-        "день": 13 * 60,
-        "вечер": 19 * 60,
+        "утро": 9 * 60,
+        "день": 12 * 60 + 30,
+        "вечер": 18 * 60,
         "ночь": 21 * 60,
     }.get(tod)
+
+
+def _plan_task_time_bucket(task: dict) -> str:
+    """
+    Эффективный период суток для планирования (как в списках «Сегодня»):
+    при due_time — по часу; иначе time_of_day с учётом синонимов.
+    """
+    ti = (task.get("due_time") or "").strip()
+    if ti:
+        try:
+            h = int(ti.split(":", 1)[0])
+            from task_parsing import time_of_day_from_hour
+
+            inferred = time_of_day_from_hour(h)
+            if inferred:
+                return inferred
+        except (ValueError, IndexError):
+            pass
+    tod = _normalize_plan_time_of_day_token(task.get("time_of_day"))
+    if tod in ("утро", "день", "вечер", "ночь"):
+        return tod
+    return ""
 
 
 def _preferred_plan_start_min(task: dict, grid_start_min: int) -> int | None:
     sm = _due_time_to_start_min(task.get("due_time"))
     if sm is not None:
         return sm
-    td = _time_of_day_default_start_min(task.get("time_of_day"))
+    bucket = _plan_task_time_bucket(task)
+    td = _time_of_day_default_start_min(bucket if bucket else None)
     if td is not None:
         return td
     est = int(task.get("estimate_min") or 0)
@@ -2112,7 +2206,8 @@ def ensure_plan_slots_from_due_time(
 ) -> int:
     """Создаёт слоты для задач дня без слота.
 
-    Учитывает: точное due_time; блок суток (любая задача); оценку ≥ 5 мин — якорь = начало сетки.
+    Учитывает: точное due_time; блок суток (утро/день/вечер/ночь и синонимы обед→день), в т.ч.
+    выведенный из часа due_time; оценку ≥ 5 мин — якорь = начало сетки.
 
     Длительность: estimate_min, если ≥ 5 мин, иначе 30 мин; кратность 5 мин.
     Нижняя граница дня — из настроек plan_grid_start_min (по умолчанию 9:00).

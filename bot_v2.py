@@ -272,6 +272,8 @@ def _task_time_bucket(t: dict) -> str:
         except (ValueError, IndexError):
             pass
     tod = (t.get("time_of_day") or "").strip().lower()
+    aliases = {"обед": "день", "полдень": "день", "завтрак": "утро"}
+    tod = aliases.get(tod, tod)
     if tod in ("утро", "день", "вечер", "ночь"):
         return tod
     return ""
