@@ -1114,8 +1114,9 @@ PLAN_DAY_START_MIN = 6 * 60
 PLAN_DAY_END_MIN = 24 * 60    # 24:00 (показываем сетку до полуночи)
 PLAN_SLOT_STEP_MIN = 15
 # Высота одной ячейки сетки (15 мин): больше — лучше читается текст в слотах
-PLAN_ROW_HEIGHT_PX = 44
-PLAN_SLOT_VERTICAL_GAP_PX = 8
+# Выше ячейка — короткие слоты (5 мин) остаются читаемыми без «раздувания» в соседние
+PLAN_ROW_HEIGHT_PX = 52
+PLAN_SLOT_VERTICAL_GAP_PX = 3
 PLAN_DURATION_PRESETS = (5, 10, 15, 20, 30, 45, 60, 90, 120, 180)
 PLAN_MORNING_END_MIN = 12 * 60
 PLAN_DAY_END_MIN_BAND = 17 * 60
@@ -1383,6 +1384,23 @@ async def page_plan(request: Request):
     is_today = date_str == today_str
     is_past = d < _date.fromisoformat(today_str)
 
+    _strip_dow = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+    d_today = _date.fromisoformat(today_str)
+    strip_start = d_today - _td(days=2)
+    calendar_strip: list[dict] = []
+    for i in range(21):
+        dd = strip_start + _td(days=i)
+        ds = dd.strftime("%Y-%m-%d")
+        calendar_strip.append(
+            {
+                "date_str": ds,
+                "dow": _strip_dow[dd.weekday()],
+                "dom": dd.day,
+                "is_today": ds == today_str,
+                "is_selected": ds == date_str,
+            }
+        )
+
     step = PLAN_SLOT_STEP_MIN
     pr = PLAN_ROW_HEIGHT_PX
     vgap = PLAN_SLOT_VERTICAL_GAP_PX
@@ -1420,7 +1438,8 @@ async def page_plan(request: Request):
                 continue
             top = ((sm - p0) / step) * pr
             h_raw = (int(s["duration_min"]) / step) * pr
-            height_px = max(56.0, h_raw - vgap)
+            # Без искусственного min 56px — иначе короткие слоты (5 мин) визуально наезжают на следующие
+            height_px = max(22.0, h_raw - vgap)
             pslots.append({**s, "top_px": top, "height_px": height_px})
         grid_h = ((p1 - p0) / step) * pr
         plan_periods.append(
@@ -1461,6 +1480,7 @@ async def page_plan(request: Request):
             total_planned_min=total_planned,
             total_planned_label=_humanize_minutes(total_planned),
             backlog_count=len(backlog),
+            calendar_strip=calendar_strip,
             color_choices=TASK_COLOR_CHOICES,
         ),
     )

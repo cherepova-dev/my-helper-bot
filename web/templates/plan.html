@@ -2,130 +2,45 @@
 {% block title %}Планирование — {{ date_label }}{% endblock %}
 {% block top_title %}Планирование{% endblock %}
 {% block content %}
-{% set pr = plan_row_px | default(44) %}
-<h1 class="page-heading">Планирование дня</h1>
+{% set pr = plan_row_px | default(52) %}
 
-<section class="card plan-day-toolbar">
-  <div class="plan-day-row">
-    <a class="plan-nav-btn" href="/plan?date={{ prev_date }}" aria-label="Предыдущий день">←</a>
-    <div class="plan-day-current">
-      <div class="plan-day-label">{{ date_label }}{% if is_today %} <span class="muted">· сегодня</span>{% elif is_past %} <span class="muted">· в прошлом</span>{% endif %}</div>
-      <form method="get" action="/plan" class="plan-date-form">
-        <input type="date" name="date" value="{{ date_str }}" aria-label="Выбрать дату">
-        <button type="submit" class="btn-primary">Открыть</button>
-      </form>
-    </div>
-    <a class="plan-nav-btn" href="/plan?date={{ next_date }}" aria-label="Следующий день">→</a>
-  </div>
-  <div class="plan-budget muted">
-    Запланировано: <strong>{{ total_planned_label }}</strong>
-    {% if backlog_count %} · в бэклоге на этот день: <strong>{{ backlog_count }}</strong>{% endif %}
-  </div>
-  {% if backlog_count %}
-  <form method="post" action="/plan/auto_place" class="plan-auto-row">
-    <input type="hidden" name="date" value="{{ date_str }}">
-    <button type="submit" class="btn-primary plan-auto-btn">Разложить бэклог по порядку</button>
-    <span class="muted plan-auto-hint">Подряд свободными промежутками; длительность из поля «оценка» задачи (в меню ⋯), иначе 30 мин.</span>
-  </form>
-  {% endif %}
-</section>
-
-<div class="plan-layout">
-  <section class="card plan-backlog-card">
-    <h2 class="home-section-title">Бэклог на день</h2>
-    <p class="muted">Задачи и рутины на эту дату. Точное время — в карточке (⋯); для рутин достаточно блока «Утро / День / Вечер» — в план слот встанет автоматически.</p>
-    {% if backlog %}
-    <ul class="plan-backlog-list">
-      {% for row in backlog %}
-      <li class="plan-backlog-item{% if row.color %} has-color color-{{ row.color }}{% endif %}" data-task-id="{{ row.task_id }}">
-        <div class="plan-backlog-main">
-          <span class="plan-backlog-emoji">{{ row.emoji }}</span>
-          <span class="plan-backlog-text">{{ row.text }}</span>
-          {% if row.is_routine %}<span class="plan-backlog-tag muted">рутина</span>{% endif %}
-          {% if row.estimate_min %}<span class="plan-backlog-est muted">~{{ row.estimate_min }} мин</span>{% endif %}
-          {% if row.project_label %}<span class="plan-backlog-proj muted">{{ row.project_label }}</span>{% endif %}
-        </div>
-        <details class="plan-add-form">
-          <summary class="btn-primary plan-add-summary">В план</summary>
-          <form method="post" action="/plan/add_slot" class="plan-add-grid">
-            <input type="hidden" name="task_id" value="{{ row.task_id }}">
-            <input type="hidden" name="date" value="{{ date_str }}">
-            <label class="plan-add-label">Время старта
-              <input type="time" name="start" step="300" value="09:00" required>
-            </label>
-            <label class="plan-add-label">Длительность
-              <select name="duration_min" required aria-label="Длительность">
-                {% for d in duration_presets %}
-                <option value="{{ d }}"{% if (row.estimate_min and row.estimate_min == d) or (not row.estimate_min and d == 30) %} selected{% endif %}>{{ d }} мин</option>
-                {% endfor %}
-              </select>
-            </label>
-            <button type="submit" class="btn-primary">Поставить</button>
-          </form>
-        </details>
-      </li>
+<div class="plan-page">
+  <section class="card plan-cal-toolbar">
+    <nav class="plan-cal-strip" aria-label="Дни" id="plan-cal-strip">
+      {% for day in calendar_strip %}
+      <a href="/plan?date={{ day.date_str }}"
+         class="plan-cal-day{% if day.is_selected %} plan-cal-day--selected{% endif %}{% if day.is_today %} plan-cal-day--today{% endif %}">
+        <span class="plan-cal-dow">{{ day.dow }}</span>
+        <span class="plan-cal-dom">{{ day.dom }}</span>
+      </a>
       {% endfor %}
-    </ul>
-    {% else %}
-    <p class="muted">На эту дату задач не назначено.</p>
-    {% endif %}
-
-    {% if other_tasks %}
-    <details class="plan-other-tasks">
-      <summary class="muted plan-other-summary">Добавить другую задачу из общего списка</summary>
-      <ul class="plan-backlog-list plan-backlog-list--secondary">
-        {% for row in other_tasks %}
-        <li class="plan-backlog-item{% if row.color %} has-color color-{{ row.color }}{% endif %}">
-          <div class="plan-backlog-main">
-            <span class="plan-backlog-emoji">{{ row.emoji }}</span>
-            <span class="plan-backlog-text">{{ row.text }}</span>
-            {% if row.due_date %}<span class="plan-backlog-tag muted">{{ row.due_date }}</span>{% endif %}
-            {% if row.estimate_min %}<span class="plan-backlog-est muted">~{{ row.estimate_min }} мин</span>{% endif %}
-            {% if row.project_label %}<span class="plan-backlog-proj muted">{{ row.project_label }}</span>{% endif %}
-          </div>
-          <details class="plan-add-form">
-            <summary class="btn-primary plan-add-summary">В план</summary>
-            <form method="post" action="/plan/add_slot" class="plan-add-grid">
-              <input type="hidden" name="task_id" value="{{ row.task_id }}">
-              <input type="hidden" name="date" value="{{ date_str }}">
-              <label class="plan-add-label">Время старта
-                <input type="time" name="start" step="300" value="09:00" required>
-              </label>
-              <label class="plan-add-label">Длительность
-                <select name="duration_min" required aria-label="Длительность">
-                  {% for d in duration_presets %}
-                  <option value="{{ d }}"{% if (row.estimate_min and row.estimate_min == d) or (not row.estimate_min and d == 30) %} selected{% endif %}>{{ d }} мин</option>
-                  {% endfor %}
-                </select>
-              </label>
-              <button type="submit" class="btn-primary">Поставить</button>
-            </form>
-          </details>
-        </li>
-        {% endfor %}
-      </ul>
+    </nav>
+    <p class="plan-cal-meta muted">{{ date_label }}{% if is_today %} · сегодня{% elif is_past %} · прошло{% endif %} · запланировано {{ total_planned_label }}{% if backlog_count %} · вне плана: {{ backlog_count }}{% endif %}</p>
+    <details class="plan-cal-jump">
+      <summary class="muted plan-cal-jump-sum">Другая дата…</summary>
+      <form method="get" action="/plan" class="plan-date-form plan-date-form--inline">
+        <input type="date" name="date" value="{{ date_str }}" aria-label="Дата">
+        <button type="submit" class="btn-primary">Перейти</button>
+      </form>
     </details>
-    {% endif %}
   </section>
 
   <section class="card plan-grid-card">
-    <h2 class="home-section-title">Расписание дня</h2>
-    <p class="muted plan-tod-hint plan-strip-hint">Листай вправо (на телефоне — по одной колонке): <span class="plan-legend plan-legend--morning">утро</span>, <span class="plan-legend plan-legend--day">день</span>, <span class="plan-legend plan-legend--evening">вечер</span>. Сетка {{ slot_step_min }} мин ({{ plan_grid_range_label }}), внутри ячейки — деления по 5 мин. Начало сетки меняется в «Настройки».</p>
+    <p class="muted plan-tod-hint plan-strip-hint">Листай колонки: <span class="plan-legend plan-legend--morning">утро</span>, <span class="plan-legend plan-legend--day">день</span>, <span class="plan-legend plan-legend--evening">вечер</span>. Сетка {{ slot_step_min }} мин ({{ plan_grid_range_label }}). Время слота — по нажатию; в подписи только текст.</p>
     <div class="plan-schedule-strip" role="region" aria-label="Расписание по частям дня">
       {% for period in plan_periods %}
       <div class="plan-period-panel card {{ period.panel_class }}" data-period="{{ period.key }}">
-        <h3 class="plan-period-heading">{{ period.title }}</h3>
+        <h2 class="plan-period-heading">{{ period.title }}</h2>
         <div class="plan-grid plan-grid--period"
              style="--plan-step:{{ slot_step_min }}; --plan-row-h:{{ pr }}px; min-height: {{ period.grid_h }}px;">
           {% for s in period.slots %}
           <details class="plan-slot{% if s.color %} has-color color-{{ s.color }}{% endif %}"
                    style="top: {{ s.top_px }}px; height: {{ s.height_px }}px;">
             <summary class="plan-slot-summary">
-              <span class="plan-slot-time">{{ s.start_label }}–{{ s.end_label }}</span>
               <span class="plan-slot-text">{{ s.text }}</span>
-              <span class="plan-slot-dur muted">{{ s.duration_label }}</span>
             </summary>
             <div class="plan-slot-actions">
+              <p class="muted plan-slot-meta-open">{{ s.start_label }}–{{ s.end_label }} · {{ s.duration_label }}</p>
               <form method="post" action="/plan/update_slot" class="plan-add-grid">
                 <input type="hidden" name="slot_id" value="{{ s.slot_id }}">
                 <input type="hidden" name="date" value="{{ date_str }}">
@@ -159,5 +74,105 @@
       {% endfor %}
     </div>
   </section>
+
+  <details class="card plan-tools">
+    <summary class="plan-tools-summary">Бэклог и добавление в план</summary>
+    <div class="plan-tools-body">
+      {% if backlog_count %}
+      <form method="post" action="/plan/auto_place" class="plan-auto-row plan-auto-row--compact">
+        <input type="hidden" name="date" value="{{ date_str }}">
+        <button type="submit" class="btn-primary plan-auto-btn">Разложить бэклог по порядку</button>
+        <span class="muted plan-auto-hint">Свободные окна подряд; длительность из «⋯», иначе 30 мин.</span>
+      </form>
+      {% endif %}
+      <h3 class="plan-tools-subtitle">Задачи на этот день (ещё не в расписании)</h3>
+      <p class="muted plan-tools-lead">Точное время — в ⋯ у задачи; для рутин можно только блок утро/день/вечер.</p>
+      {% if backlog %}
+      <ul class="plan-backlog-list">
+        {% for row in backlog %}
+        <li class="plan-backlog-item{% if row.color %} has-color color-{{ row.color }}{% endif %}" data-task-id="{{ row.task_id }}">
+          <div class="plan-backlog-main">
+            <span class="plan-backlog-emoji">{{ row.emoji }}</span>
+            <span class="plan-backlog-text">{{ row.text }}</span>
+            {% if row.is_routine %}<span class="plan-backlog-tag muted">рутина</span>{% endif %}
+            {% if row.estimate_min %}<span class="plan-backlog-est muted">~{{ row.estimate_min }} мин</span>{% endif %}
+            {% if row.project_label %}<span class="plan-backlog-proj muted">{{ row.project_label }}</span>{% endif %}
+          </div>
+          <details class="plan-add-form">
+            <summary class="btn-primary plan-add-summary">В план</summary>
+            <form method="post" action="/plan/add_slot" class="plan-add-grid">
+              <input type="hidden" name="task_id" value="{{ row.task_id }}">
+              <input type="hidden" name="date" value="{{ date_str }}">
+              <label class="plan-add-label">Время старта
+                <input type="time" name="start" step="300" value="09:00" required>
+              </label>
+              <label class="plan-add-label">Длительность
+                <select name="duration_min" required aria-label="Длительность">
+                  {% for d in duration_presets %}
+                  <option value="{{ d }}"{% if (row.estimate_min and row.estimate_min == d) or (not row.estimate_min and d == 30) %} selected{% endif %}>{{ d }} мин</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <button type="submit" class="btn-primary">Поставить</button>
+            </form>
+          </details>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">Все задачи на эту дату уже в расписании или список пуст.</p>
+      {% endif %}
+
+      {% if other_tasks %}
+      <details class="plan-other-tasks plan-other-tasks--nested">
+        <summary class="plan-other-summary">Добавить из общего списка</summary>
+        <ul class="plan-backlog-list plan-backlog-list--secondary">
+          {% for row in other_tasks %}
+          <li class="plan-backlog-item{% if row.color %} has-color color-{{ row.color }}{% endif %}">
+            <div class="plan-backlog-main">
+              <span class="plan-backlog-emoji">{{ row.emoji }}</span>
+              <span class="plan-backlog-text">{{ row.text }}</span>
+              {% if row.due_date %}<span class="plan-backlog-tag muted">{{ row.due_date }}</span>{% endif %}
+              {% if row.estimate_min %}<span class="plan-backlog-est muted">~{{ row.estimate_min }} мин</span>{% endif %}
+              {% if row.project_label %}<span class="plan-backlog-proj muted">{{ row.project_label }}</span>{% endif %}
+            </div>
+            <details class="plan-add-form">
+              <summary class="btn-primary plan-add-summary">В план</summary>
+              <form method="post" action="/plan/add_slot" class="plan-add-grid">
+                <input type="hidden" name="task_id" value="{{ row.task_id }}">
+                <input type="hidden" name="date" value="{{ date_str }}">
+                <label class="plan-add-label">Время старта
+                  <input type="time" name="start" step="300" value="09:00" required>
+                </label>
+                <label class="plan-add-label">Длительность
+                  <select name="duration_min" required aria-label="Длительность">
+                    {% for d in duration_presets %}
+                    <option value="{{ d }}"{% if (row.estimate_min and row.estimate_min == d) or (not row.estimate_min and d == 30) %} selected{% endif %}>{{ d }} мин</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <button type="submit" class="btn-primary">Поставить</button>
+              </form>
+            </details>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </div>
+  </details>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var strip = document.getElementById("plan-cal-strip");
+  if (!strip) return;
+  var sel = strip.querySelector(".plan-cal-day--selected");
+  if (sel && sel.scrollIntoView) {
+    sel.scrollIntoView({ inline: "center", block: "nearest" });
+  }
+})();
+</script>
 {% endblock %}

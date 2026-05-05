@@ -2053,17 +2053,22 @@ def _preferred_plan_start_min(task: dict, grid_start_min: int) -> int | None:
     est = int(task.get("estimate_min") or 0)
     if est >= 5:
         return int(grid_start_min)
+    # Рутина уже попала в список на день — ставим в план даже без оценки и без блока суток
+    if task.get("is_routine"):
+        return int(grid_start_min)
     return None
 
 
 def _ensure_plan_sort_key(t: dict, grid_start_min: int) -> tuple:
     pref = _preferred_plan_start_min(t, grid_start_min)
     has_exact = _due_time_to_start_min(t.get("due_time")) is not None
+    ts = int(t.get("today_sort") or 0)
     if pref is None:
-        return (2, 99999, int(t["id"]))
+        return (2, 99999, ts, int(t["id"]))
     return (
         0 if has_exact else 1,
         pref,
+        ts,
         int(t["id"]),
     )
 
