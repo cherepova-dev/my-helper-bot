@@ -392,25 +392,73 @@ def _format_task_list(tasks: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
-async def _reply(update: Update, text: str, max_retries: int = 3) -> None:
+_TELEGRAM_TEXT_SAFE_LEN = 3900
+
+
+def _split_for_telegram(text: str, limit: int = _TELEGRAM_TEXT_SAFE_LEN) -> list[str]:
+    """Telegram ограничивает длину одного сообщения (~4096 символов); режем с приоритетом строк."""
+    t = text or ""
+    if not t.strip():
+        return [" "]
+    out: list[str] = []
+    pos = 0
+    n = len(t)
+    while pos < n:
+        end = min(pos + limit, n)
+        if end < n:
+            nl = t.rfind("\n", pos, end)
+            if nl > pos + max(24, limit // 8):
+                end = nl + 1
+        out.append(t[pos:end])
+        pos = end
+    return out
+
+
+async def _reply_one_part(update: Update, part: str, max_retries: int = 3) -> None:
     for attempt in range(max_retries + 1):
         try:
-            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(part, parse_mode=ParseMode.MARKDOWN)
             return
         except (TimedOut, NetworkError) as e:
             if attempt < max_retries:
                 wait = 2 ** attempt
-                logger.info("Retry %s/%s через %ss (%s)", attempt + 1, max_retries, wait, type(e).__name__)
+                logger.info(
+                    "Retry %s/%s через %ss (%s)",
+                    attempt + 1,
+                    max_retries,
+                    wait,
+                    type(e).__name__,
+                )
                 await asyncio.sleep(wait)
             else:
                 logger.warning("Не удалось отправить после %s попыток: %s", max_retries + 1, e)
         except Exception:
             try:
-                await update.message.reply_text(text)
+                await update.message.reply_text(part)
                 return
             except Exception as e2:
                 logger.warning("Ошибка отправки: %s", e2)
                 return
+
+
+async def _reply(update: Update, text: str, max_retries: int = 3) -> None:
+    for part in _split_for_telegram(text):
+        await _reply_one_part(update, part, max_retries)
+
+
+def _safe_routine_completion_rows(
+    user_id: int, start_utc: str, end_utc: str
+) -> list[dict]:
+    try:
+        return db.routine_completions_raw_between(user_id, start_utc, end_utc)
+    except Exception:
+        logger.exception(
+            "routine_completions_raw_between: user_id=%s %s..%s",
+            user_id,
+            start_utc,
+            end_utc,
+        )
+        return []
 
 
 async def _save_one_task_and_reply(
@@ -1249,7 +1297,7 @@ async def cmd_done_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
     db.attach_project_labels(uid, tasks)
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-    raw_h = db.routine_completions_raw_between(uid, start_utc, end_utc)
+    raw_h = _safe_routine_completion_rows(uid, start_utc, end_utc)
     text = _format_done_report_week(
         tasks,
         tz_name,
@@ -1598,7 +1646,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
         db.attach_project_labels(uid, tasks)
         tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-        raw_h = db.routine_completions_raw_between(uid, start_utc, end_utc)
+        raw_h = _safe_routine_completion_rows(uid, start_utc, end_utc)
         await _reply(
             update,
             _format_done_report_week(
@@ -1729,7 +1777,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         tasks, mon, sun, start_utc, end_utc = db.get_done_tasks_calendar_week(uid)
         db.attach_project_labels(uid, tasks)
         tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
-        raw_h = db.routine_completions_raw_between(uid, start_utc, end_utc)
+        raw_h = _safe_routine_completion_rows(uid, start_utc, end_utc)
         await _reply(
             update,
             _format_done_report_week(

@@ -6,6 +6,7 @@
 """
 
 import os
+import json
 import random
 import logging
 from datetime import datetime, timezone, timedelta
@@ -176,6 +177,19 @@ def _init_tables_pg() -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_dps_user_date ON daily_plan_slots(user_id, plan_date);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_unique ON daily_plan_slots(user_id, plan_date, task_id);
+    CREATE TABLE IF NOT EXISTS analytics_events (
+        id              BIGSERIAL PRIMARY KEY,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        anonymous_id    TEXT,
+        session_id      TEXT,
+        event_name      TEXT NOT NULL,
+        properties      JSONB
+    );
+    CREATE INDEX IF NOT EXISTS idx_ae_created ON analytics_events (created_at);
+    CREATE INDEX IF NOT EXISTS idx_ae_event_time ON analytics_events (event_name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ae_user_time ON analytics_events (user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ae_anon_time ON analytics_events (anonymous_id, created_at);
     """)
     for col_sql in (
         "ALTER TABLE tasks ADD COLUMN is_routine BOOLEAN DEFAULT FALSE",
@@ -201,6 +215,14 @@ def _init_tables_pg() -> None:
         "CREATE INDEX IF NOT EXISTS idx_tasks_proj_color "
         "ON tasks(user_id, project_id, color, color_sort, due_date) "
         "WHERE status = 'active'",
+        "ALTER TABLE users ADD COLUMN utm_source TEXT",
+        "ALTER TABLE users ADD COLUMN utm_medium TEXT",
+        "ALTER TABLE users ADD COLUMN utm_campaign TEXT",
+        "ALTER TABLE users ADD COLUMN utm_content TEXT",
+        "ALTER TABLE users ADD COLUMN utm_term TEXT",
+        "ALTER TABLE users ADD COLUMN attr_referrer TEXT",
+        "ALTER TABLE users ADD COLUMN attr_landing_path TEXT",
+        "ALTER TABLE users ADD COLUMN activated_at TIMESTAMPTZ",
     ):
         try:
             cur.execute(col_sql)
@@ -283,6 +305,19 @@ def _init_tables_sqlite() -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_dps_user_date ON daily_plan_slots(user_id, plan_date);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_dps_unique ON daily_plan_slots(user_id, plan_date, task_id);
+    CREATE TABLE IF NOT EXISTS analytics_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at      TEXT DEFAULT (datetime('now')),
+        user_id         INTEGER REFERENCES users(id),
+        anonymous_id    TEXT,
+        session_id      TEXT,
+        event_name      TEXT NOT NULL,
+        properties      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ae_created ON analytics_events (created_at);
+    CREATE INDEX IF NOT EXISTS idx_ae_event_time ON analytics_events (event_name, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ae_user_time ON analytics_events (user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ae_anon_time ON analytics_events (anonymous_id, created_at);
     """)
     _conn.commit()
     for col_sql in (
@@ -308,6 +343,14 @@ def _init_tables_sqlite() -> None:
         "CREATE INDEX IF NOT EXISTS idx_tasks_proj_color "
         "ON tasks(user_id, project_id, color, color_sort, due_date) "
         "WHERE status = 'active'",
+        "ALTER TABLE users ADD COLUMN utm_source TEXT",
+        "ALTER TABLE users ADD COLUMN utm_medium TEXT",
+        "ALTER TABLE users ADD COLUMN utm_campaign TEXT",
+        "ALTER TABLE users ADD COLUMN utm_content TEXT",
+        "ALTER TABLE users ADD COLUMN utm_term TEXT",
+        "ALTER TABLE users ADD COLUMN attr_referrer TEXT",
+        "ALTER TABLE users ADD COLUMN attr_landing_path TEXT",
+        "ALTER TABLE users ADD COLUMN activated_at TEXT",
     ):
         try:
             _conn.execute(col_sql)
@@ -432,6 +475,127 @@ def _insert_returning(sql: str, params: tuple = ()) -> dict | None:
         conn.commit()
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (cur.lastrowid,)).fetchone()
         return dict(row) if row else None
+
+
+# ── Продуктовая аналитика (события в БД; Metabase читает analytics_events) ─
+
+_ACTIVATION_EVENTS = frozenset(
+    {
+        "task_created",
+        "task_completed",
+        "view_today",
+        "view_tasks",
+        "view_home",
+    }
+)
+
+
+def track_event(
+    event_name: str,
+    *,
+    user_id: int | None = None,
+    anonymous_id: str | None = None,
+    session_id: str | None = None,
+    properties: dict | None = None,
+) -> None:
+    """Запись события; сбои логируются и не ломают запрос."""
+    try:
+        props_json = json.dumps(properties or {}, ensure_ascii=False)
+        if USE_PG:
+            _execute(
+                "INSERT INTO analytics_events "
+                "(user_id, anonymous_id, session_id, event_name, properties) "
+                "VALUES (%s, %s, %s, %s, %s::jsonb)",
+                (user_id, anonymous_id, session_id, event_name, props_json),
+            )
+        else:
+            _execute(
+                "INSERT INTO analytics_events "
+                "(user_id, anonymous_id, session_id, event_name, properties) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (user_id, anonymous_id, session_id, event_name, props_json),
+            )
+    except Exception:
+        logger.exception("analytics track_event failed: %s", event_name)
+
+
+def link_anonymous_events_to_user(anonymous_id: str, user_id: int) -> None:
+    if not anonymous_id or not user_id:
+        return
+    try:
+        _execute(
+            "UPDATE analytics_events SET user_id = %s "
+            "WHERE anonymous_id = %s AND user_id IS NULL",
+            (user_id, anonymous_id),
+        )
+    except Exception:
+        logger.exception("analytics link_anonymous_events_to_user failed")
+
+
+def _nz(val) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s or None
+
+
+def apply_signup_attribution_from_touch(user_id: int, touch: dict | None) -> None:
+    """Первое касание: UTM + лендинг + referrer; не перезаписывает уже сохранённое."""
+    if not touch or not user_id:
+        return
+    try:
+        _execute(
+            "UPDATE users SET "
+            "utm_source = COALESCE(utm_source, %s), "
+            "utm_medium = COALESCE(utm_medium, %s), "
+            "utm_campaign = COALESCE(utm_campaign, %s), "
+            "utm_content = COALESCE(utm_content, %s), "
+            "utm_term = COALESCE(utm_term, %s), "
+            "attr_referrer = COALESCE(attr_referrer, %s), "
+            "attr_landing_path = COALESCE(attr_landing_path, %s) "
+            "WHERE id = %s",
+            (
+                _nz(touch.get("utm_source")),
+                _nz(touch.get("utm_medium")),
+                _nz(touch.get("utm_campaign")),
+                _nz(touch.get("utm_content")),
+                _nz(touch.get("utm_term")),
+                _nz(touch.get("referrer")),
+                _nz(touch.get("landing_path")),
+                user_id,
+            ),
+        )
+    except Exception:
+        logger.exception("apply_signup_attribution_from_touch failed user_id=%s", user_id)
+
+
+def maybe_record_activation(user_id: int, trigger_event: str) -> None:
+    if trigger_event not in _ACTIVATION_EVENTS:
+        return
+    try:
+        row = _fetchone(
+            "SELECT activated_at FROM users WHERE id = %s", (user_id,)
+        )
+        if not row or row.get("activated_at"):
+            return
+        if USE_PG:
+            _execute(
+                "UPDATE users SET activated_at = NOW() WHERE id = %s AND activated_at IS NULL",
+                (user_id,),
+            )
+        else:
+            _execute(
+                "UPDATE users SET activated_at = datetime('now') "
+                "WHERE id = %s AND activated_at IS NULL",
+                (user_id,),
+            )
+        track_event(
+            "user_activated",
+            user_id=user_id,
+            properties={"trigger": trigger_event},
+        )
+    except Exception:
+        logger.exception("maybe_record_activation failed user_id=%s", user_id)
 
 
 # ── Users ────────────────────────────────────────────────────────────────
@@ -2139,15 +2303,23 @@ def refresh_plan_slots_for_task_on_date(user_id: int, task_id: int, date_str: st
     if len(raw) < 10:
         return
     ds = raw[:10]
-    s = get_settings(user_id)
     try:
-        gs = int(s.get("plan_grid_start_min", DEFAULT_SETTINGS["plan_grid_start_min"]))
-    except (TypeError, ValueError):
-        gs = int(DEFAULT_SETTINGS["plan_grid_start_min"])
-    gs = max(0, min(gs, 23 * 60 + 55))
-    gs = (gs // 5) * 5
-    delete_plan_slots_for_task_on_date(user_id, task_id, ds)
-    ensure_plan_slots_from_due_time(user_id, ds, gs)
+        s = get_settings(user_id)
+        try:
+            gs = int(s.get("plan_grid_start_min", DEFAULT_SETTINGS["plan_grid_start_min"]))
+        except (TypeError, ValueError):
+            gs = int(DEFAULT_SETTINGS["plan_grid_start_min"])
+        gs = max(0, min(gs, 23 * 60 + 55))
+        gs = (gs // 5) * 5
+        delete_plan_slots_for_task_on_date(user_id, task_id, ds)
+        ensure_plan_slots_from_due_time(user_id, ds, gs)
+    except Exception:
+        logger.exception(
+            "refresh_plan_slots_for_task_on_date failed user_id=%s task_id=%s date=%s",
+            user_id,
+            task_id,
+            ds,
+        )
 
 
 def get_plan_slots(user_id: int, date_str: str) -> list[dict]:

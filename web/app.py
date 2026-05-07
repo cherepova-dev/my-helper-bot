@@ -36,6 +36,7 @@ from web.web_copy import (
 from categories import builtin_keywords_for_name, keywords_text_to_json
 from web.report_html import report_text_to_html
 from web import auth as web_auth
+from web.analytics import AnalyticsMiddleware, ANON_COOKIE, track_user
 from task_commands import (
     add_project_task_from_text,
     add_task_from_text,
@@ -254,8 +255,8 @@ _in_prod = os.environ.get("RENDER", "").lower() == "true" or os.environ.get(
     "WEB_HTTPS_ONLY", ""
 ).lower() in ("1", "true", "yes")
 
-# Сначала добавляются middleware, которые должны выполняться ВНУТРИ session
-# (т.к. add_middleware идёт в обратном порядке).
+# Порядок add_middleware (Starlette): последний добавленный — внешний на входе.
+# Цепочка: Session → CSRF → Admin → Analytics → роуты (Analytics видит session).
 class _OriginCsrfMiddleware(BaseHTTPMiddleware):
     """
     Защита от CSRF: state-changing методы должны иметь Origin/Referer того же
@@ -309,6 +310,8 @@ class _AdminFlagMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# Ближе всего к роутам: Session → CSRF → Admin → Analytics → app
+app.add_middleware(AnalyticsMiddleware, cookie_secure=_in_prod)
 app.add_middleware(_AdminFlagMiddleware)
 app.add_middleware(_OriginCsrfMiddleware)
 app.add_middleware(
@@ -474,6 +477,7 @@ async def login_post(
             pass
 
     web_auth.login_user(request, int(user["id"]))
+    db.track_event("login_success", user_id=int(user["id"]), properties={})
     return RedirectResponse("/", status_code=302)
 
 
@@ -549,7 +553,17 @@ async def signup_post(
         )
 
     db.sync_admin_roles()
-    web_auth.login_user(request, int(user["id"]))
+    uid_new = int(user["id"])
+    touch = request.session.pop("analytics_first_touch", None)
+    if isinstance(touch, dict):
+        db.apply_signup_attribution_from_touch(uid_new, touch)
+    aid = getattr(request.state, "analytics_anonymous_id", None) or request.cookies.get(
+        ANON_COOKIE
+    )
+    if aid:
+        db.link_anonymous_events_to_user(aid, uid_new)
+    db.track_event("signup_completed", user_id=uid_new, properties={})
+    web_auth.login_user(request, uid_new)
     return RedirectResponse("/", status_code=302)
 
 
@@ -714,6 +728,7 @@ async def page_home(request: Request):
 
     user_row = get_user_row(request)
     uid = user_row["id"]
+    track_user(request, "view_home")
     _maybe_transfer_overdue(uid)
     # Без _active_tasks_display_order: на главной нужны только числа (COUNT / len «сегодня»).
     today_tasks = db.get_today_tasks(uid)
@@ -801,6 +816,7 @@ async def page_today(request: Request):
 
     user_row = get_user_row(request)
     uid = user_row["id"]
+    track_user(request, "view_today")
     tz_name = (user_row.get("timezone") or "Europe/Moscow").strip() or "Europe/Moscow"
     local_hour = _user_local_hour(tz_name)
     _maybe_transfer_overdue(uid)
@@ -907,6 +923,7 @@ async def page_tasks(request: Request):
     from bot_v2 import _active_tasks_display_order, _format_date_human, _format_time_human
 
     uid = get_user_row(request)["id"]
+    track_user(request, "view_tasks")
     _maybe_transfer_overdue(uid)
     tasks = _active_tasks_display_order(uid)
     numbered = list(enumerate(tasks, start=1))
@@ -2028,6 +2045,8 @@ async def action_add(request: Request, text: str = Form("")):
         return RedirectResponse("/login", status_code=302)
     user_row = get_user_row(request)
     result = add_task_from_text(user_row, text, project_id=None)
+    if result.get("ok"):
+        track_user(request, "task_created", source="tasks_add")
     dest = request.query_params.get("next", "/today")
     path = dest.split("?", 1)[0].rstrip("/") or "/"
     if _flash_allowed(path):
@@ -2076,6 +2095,8 @@ async def action_project_add_task(
         return RedirectResponse("/login", status_code=302)
     user_row = get_user_row(request)
     result = add_project_task_from_text(user_row, project_id, text)
+    if result.get("ok"):
+        track_user(request, "task_created", source="project_add_task")
     dest = f"/projects/{project_id}"
     return _flash_redirect(request, dest, result["message"], result["ok"])
 
@@ -2116,6 +2137,8 @@ async def action_complete(request: Request):
             return _flash_redirect(request, dest, "Отметь галочками задачи в списке.", False)
         return RedirectResponse(f"{dest}?err=complete", status_code=302)
     ok_titles, fail = complete_task_ids(uid, ids)
+    if ok_titles:
+        track_user(request, "task_completed", n=len(ok_titles))
     if flash_dest:
         if ok_titles and not fail:
             return _flash_redirect(
@@ -2592,6 +2615,8 @@ async def action_voice(request: Request, file: UploadFile = File(...)):
         return _flash_redirect(request, dest, msg, False)
     user_row = get_user_row(request)
     result = add_task_from_text(user_row, text)
+    if result.get("ok"):
+        track_user(request, "task_created", source="voice")
     if wants_json:
         return JSONResponse(
             {
