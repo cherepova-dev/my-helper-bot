@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from urllib.parse import urlparse
@@ -13,6 +14,8 @@ from starlette.requests import Request
 
 import db
 from web import auth as web_auth
+
+logger = logging.getLogger(__name__)
 
 ANON_COOKIE = "moychnaya_aid"
 _UTM_KEYS = (
@@ -94,32 +97,41 @@ class AnalyticsMiddleware(BaseHTTPMiddleware):
         request.state.analytics_anonymous_id = aid
 
         if request.method == "GET" and not web_auth.is_authenticated(request):
-            merge_first_touch(request)
+            try:
+                merge_first_touch(request)
+            except Exception:
+                logger.exception("analytics merge_first_touch failed path=%s", path)
 
         response = await call_next(request)
 
         if request.method == "GET" and path != "/health" and not path.startswith("/static"):
-            uid = web_auth.current_user_id(request)
-            query_str = _truncate(str(request.url.query or ""), 400)
-            db.track_event(
-                "page_view",
-                user_id=int(uid) if uid is not None else None,
-                anonymous_id=aid if uid is None else None,
-                properties={
-                    "path": _truncate(path, 512),
-                    "query": query_str,
-                    "referrer": _truncate(request.headers.get("referer"), 512),
-                },
-            )
+            try:
+                uid = web_auth.current_user_id(request)
+                query_str = _truncate(str(request.url.query or ""), 400)
+                db.track_event(
+                    "page_view",
+                    user_id=int(uid) if uid is not None else None,
+                    anonymous_id=aid if uid is None else None,
+                    properties={
+                        "path": _truncate(path, 512),
+                        "query": query_str,
+                        "referrer": _truncate(request.headers.get("referer"), 512),
+                    },
+                )
+            except Exception:
+                logger.exception("analytics middleware page_view failed path=%s", path)
 
         if new_cookie:
-            response.set_cookie(
-                key=ANON_COOKIE,
-                value=aid,
-                max_age=365 * 24 * 3600,
-                httponly=True,
-                samesite="lax",
-                secure=self._cookie_secure,
-                path="/",
-            )
+            try:
+                response.set_cookie(
+                    key=ANON_COOKIE,
+                    value=aid,
+                    max_age=365 * 24 * 3600,
+                    httponly=True,
+                    samesite="lax",
+                    secure=self._cookie_secure,
+                    path="/",
+                )
+            except Exception:
+                logger.exception("analytics set_cookie failed")
         return response
